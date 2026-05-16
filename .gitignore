@@ -10,12 +10,19 @@
 *.userosscache
 *.sln.docstates
 *.env
+.claude/settings.local.json
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
+# Claude
+*.mcpb
+
 # Mono auto generated files
 mono_crash.*
+
+# C# Auto-Gen
+*.g.cs
 
 # Build results
 [Dd]ebug/
@@ -81,6 +88,7 @@ dlldata.c
 
 # Benchmark Results
 BenchmarkDotNet.Artifacts/
+*.lscache
 
 # .NET Core
 project.lock.json
