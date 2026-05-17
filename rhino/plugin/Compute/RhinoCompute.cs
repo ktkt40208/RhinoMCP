@@ -11221,35 +11221,52 @@ internal class GrasshopperObject
 
         static void ModifyTypeInfo(JsonTypeInfo typeInfo)
         {
-            for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
+            var t = typeInfo.Type;
+            if (t == typeof(Rhino.Geometry.Circle))
             {
-                var property = typeInfo.Properties[i];
-                if (property.DeclaringType == typeof(Rhino.Geometry.Circle))
+                for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
                 {
-                    if (property.Name == "IsValid" || property.Name == "BoundingBox" || property.Name == "Diameter" || property.Name == "Circumference")
+                    var name = typeInfo.Properties[i].Name;
+                    if (name == "IsValid" || name == "BoundingBox" || name == "Diameter" || name == "Circumference")
                         typeInfo.Properties.RemoveAt(i);
                 }
-                else if (property.DeclaringType == typeof(Rhino.Geometry.Plane))
+            }
+            else if (t == typeof(Rhino.Geometry.Plane))
+            {
+                for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
                 {
-                    if (property.Name == "IsValid" || property.Name == "OriginX" || property.Name == "OriginY" || property.Name == "OriginZ")
+                    var name = typeInfo.Properties[i].Name;
+                    if (name == "IsValid" || name == "OriginX" || name == "OriginY" || name == "OriginZ")
                         typeInfo.Properties.RemoveAt(i);
                 }
-                else if (property.DeclaringType == typeof(Rhino.Geometry.Point3f) ||
-                         property.DeclaringType == typeof(Rhino.Geometry.Point2f) ||
-                         property.DeclaringType == typeof(Rhino.Geometry.Vector2f) ||
-                         property.DeclaringType == typeof(Rhino.Geometry.Vector3f))
+            }
+            else if (t == typeof(Rhino.Geometry.Point3f) ||
+                     t == typeof(Rhino.Geometry.Point2f) ||
+                     t == typeof(Rhino.Geometry.Vector2f) ||
+                     t == typeof(Rhino.Geometry.Vector3f))
+            {
+                for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
                 {
-                    if (property.Name != "X" && property.Name != "Y" && property.Name != "Z")
+                    var name = typeInfo.Properties[i].Name;
+                    if (name != "X" && name != "Y" && name != "Z")
                         typeInfo.Properties.RemoveAt(i);
                 }
-                else if (property.DeclaringType == typeof(Rhino.Geometry.Line))
+            }
+            else if (t == typeof(Rhino.Geometry.Line))
+            {
+                for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
                 {
-                    if (property.Name != "From" && property.Name != "To")
+                    var name = typeInfo.Properties[i].Name;
+                    if (name != "From" && name != "To")
                         typeInfo.Properties.RemoveAt(i);
                 }
-                else if (property.DeclaringType == typeof(Rhino.Geometry.MeshFace))
+            }
+            else if (t == typeof(Rhino.Geometry.MeshFace))
+            {
+                for (int i = typeInfo.Properties.Count - 1; i >= 0; i--)
                 {
-                    if (property.Name == "IsTriangle" || property.Name == "IsQuad")
+                    var name = typeInfo.Properties[i].Name;
+                    if (name == "IsTriangle" || name == "IsQuad")
                         typeInfo.Properties.RemoveAt(i);
                 }
             }
