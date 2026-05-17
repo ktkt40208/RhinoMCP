@@ -302,6 +302,12 @@ public class RhinoManager(
         return c is null || c.Status != SlotStatus.Ready ? null : c;
     }
 
+    // Status-agnostic existence check. `Get` filters to Ready slots so callers
+    // routing tool calls don't accidentally dispatch into a half-launched slot;
+    // `close_slot` needs to see launching rows too, otherwise it falsely reports
+    // slot_not_found for a slot another router is still spawning.
+    public bool Has(string slotId) => store.Get(slotId) is not null;
+
     // Adopt any user-started Rhino announced via the drop directory. Each file is a
     // one-shot doorbell — always deleted, success or not.
     public void ScanAnnouncements()

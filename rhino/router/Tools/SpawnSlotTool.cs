@@ -38,7 +38,7 @@ public class SpawnSlotTool(RhinoManager manager, RhinoCrashReportFinder crashFin
         string slot,
         CancellationToken ct = default)
     {
-        if (manager.Get(slot) is null)
+        if (!manager.Has(slot))
         {
             var notFound = new CloseSlotResult(
                 Closed: false,

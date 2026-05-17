@@ -13,7 +13,11 @@ public static class GetCommandsTool
         RhinoDoc doc,
         [Description("Substring filter (case-insensitive). Strongly recommended — unfiltered results can exceed 1000 commands.")] string? filter = null)
     {
-        var needle = filter?.TrimStart('_', '-');
+        var trimmed = filter?.TrimStart('_', '-');
+        // If the user literally searched for "_" or "-" (or "__"/"--"/etc.),
+        // TrimStart produces an empty string. Fall back to the original filter
+        // so we don't silently return every command in that case.
+        var needle = string.IsNullOrEmpty(trimmed) ? filter : trimmed;
         string[] all = Command.GetCommandNames(true, false)
             .Where(n => string.IsNullOrEmpty(needle)
                      || n.Contains(needle, StringComparison.OrdinalIgnoreCase))

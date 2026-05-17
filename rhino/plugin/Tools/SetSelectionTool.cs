@@ -60,23 +60,35 @@ public static class SetSelectionTool
             if (!string.IsNullOrEmpty(geometryType))
                 settings.ObjectTypeFilter = ParseObjectType(geometryType);
 
+            var layerResolved = true;
             if (!string.IsNullOrEmpty(layer))
             {
                 var idx = doc.Layers.FindByFullPath(layer, RhinoMath.UnsetIntIndex);
                 if (idx >= 0)
+                {
                     settings.LayerIndexFilter = idx;
+                }
                 else
+                {
                     warnings.Add($"Layer not found: {layer}");
+                    layerResolved = false;
+                }
             }
 
             var nameSet = names.ToHashSet(StringComparer.Ordinal);
 
-            foreach (var obj in doc.Objects.GetObjectList(settings))
+            // If layer was the only filter the caller specified and it didn't
+            // resolve, fall through with zero matches rather than selecting
+            // every object in the document.
+            if (layerResolved)
             {
-                if (nameSet.Count > 0 && !nameSet.Contains(obj.Name ?? string.Empty)) continue;
-                if (guidSet.Contains(obj.Id)) continue;
-                obj.Select(true);
-                selected++;
+                foreach (var obj in doc.Objects.GetObjectList(settings))
+                {
+                    if (nameSet.Count > 0 && !nameSet.Contains(obj.Name ?? string.Empty)) continue;
+                    if (guidSet.Contains(obj.Id)) continue;
+                    obj.Select(true);
+                    selected++;
+                }
             }
         }
 
