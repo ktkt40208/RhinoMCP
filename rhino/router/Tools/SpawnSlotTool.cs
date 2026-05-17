@@ -32,12 +32,21 @@ public class SpawnSlotTool(RhinoManager manager, RhinoCrashReportFinder crashFin
     }
 
     [McpServerTool(Name = "close_slot")]
-    [Description("Close a Rhino slot gracefully. Saves nothing. Returns { closed: bool, error?: string, message?: string }. `error=\"cannot_close_adopted\"` means the slot was a user-started Rhino — the router will not kill it; ask the user to close the Rhino window.")]
+    [Description("Close a Rhino slot gracefully. Saves nothing. Returns { closed: bool, error?: string, message?: string }. `error=\"slot_not_found\"` means no slot with that ID is currently running. `error=\"cannot_close_adopted\"` means the slot was a user-started Rhino — the router will not kill it; ask the user to close the Rhino window.")]
     public async Task<string> CloseAsync(
         [Description("Slot ID returned by spawn_slot, or an animal-name slot adopted from a user-started Rhino")]
         string slot,
         CancellationToken ct = default)
     {
+        if (manager.Get(slot) is null)
+        {
+            var notFound = new CloseSlotResult(
+                Closed: false,
+                Error: "slot_not_found",
+                Message: $"No slot named '{slot}'. Call list_slots to see what's running.");
+            return JsonSerializer.Serialize(notFound, RouterJsonContext.Default.CloseSlotResult);
+        }
+
         try
         {
             var ok = await manager.CloseAsync(slot, ct).ConfigureAwait(false);

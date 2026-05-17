@@ -25,21 +25,22 @@ public static class RunCSharpTool
             .ToArray();
 
         int errIndex = Array.FindIndex(filtered, l =>
-            l.Contains("error CS", StringComparison.Ordinal) ||
+            l.StartsWith("Compile Error", StringComparison.OrdinalIgnoreCase) ||
+            l.Contains("error CS", StringComparison.OrdinalIgnoreCase) ||
             l.Contains("Exception:", StringComparison.Ordinal) ||
             l.StartsWith("Unhandled exception", StringComparison.OrdinalIgnoreCase));
 
         string stdout;
-        string error;
+        string? error;
         if (errIndex >= 0)
         {
-            stdout = string.Join("\n", filtered.Take(errIndex));
-            error = string.Join("\n", filtered.Skip(errIndex));
+            stdout = string.Concat(filtered.Take(errIndex));
+            error = string.Concat(filtered.Skip(errIndex));
         }
         else
         {
-            stdout = string.Join("\n", filtered);
-            error = string.Empty;
+            stdout = string.Concat(filtered);
+            error = null;
         }
 
         return JsonSerializer.Serialize(new { stdout, error });
