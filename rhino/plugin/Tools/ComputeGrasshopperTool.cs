@@ -13,6 +13,9 @@ public static class ComputeGrasshopperTool
         [Description("Optional JSON object: { \"<paramName>\": [v1, v2, ...] }. Supported value types: number, bool, string.")] string? inputs = null)
     {
         ComputeConfig.EnsureInitialized();
+        if (ComputeDiagnostics.IsMacOs() && !ComputeConfig.HasCustomUrl)
+            return UnreachableError("Rhino Compute does not run on macOS.");
+
         List<GrasshopperDataTree> trees;
         try
         {
@@ -29,10 +32,26 @@ public static class ComputeGrasshopperTool
             var outputs = resultTrees?.Select(TreeToObject).ToArray() ?? Array.Empty<object>();
             return JsonSerializer.Serialize(new { serverUrl = ComputeConfig.CurrentUrl, outputs, error = (string?)null });
         }
+        catch (Exception ex) when (ComputeDiagnostics.IsConnectionFailure(ex))
+        {
+            return UnreachableError($"Could not reach compute server: {ex.Message}");
+        }
         catch (Exception ex)
         {
             return JsonSerializer.Serialize(new { serverUrl = ComputeConfig.CurrentUrl, outputs = (object?)null, error = ex.Message });
         }
+    }
+
+    private static string UnreachableError(string message)
+    {
+        var status = ComputeDiagnostics.Probe();
+        return JsonSerializer.Serialize(new
+        {
+            serverUrl = ComputeConfig.CurrentUrl,
+            outputs = (object?)null,
+            error = message,
+            diagnostics = ComputeDiagnostics.ToDto(status),
+        });
     }
 
     private static List<GrasshopperDataTree> BuildInputTrees(string? json)

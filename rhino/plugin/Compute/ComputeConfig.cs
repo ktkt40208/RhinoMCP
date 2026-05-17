@@ -3,8 +3,8 @@ using Rhino.Compute;
 namespace RhMcp.Compute;
 
 // Centralizes Rhino Compute client configuration. The SDK in this folder
-// (RhinoCompute.cs, IntersectionCompute.cs) is copied verbatim from
-// compute.rhino3d and configures itself via the mutable static
+// (RhinoCompute.cs) is copied verbatim from compute.rhino3d and configures
+// itself via the mutable static
 // ComputeServer.{WebAddress,AuthToken,ApiKey}. We read those once from env
 // vars the first time a compute tool touches this type so the agent doesn't
 // have to pass a server URL on every call. The CLR guarantees the static
@@ -18,10 +18,13 @@ internal static class ComputeConfig
 {
     public const string DefaultUrl = "http://localhost:6500";
 
+    public static bool HasCustomUrl { get; }
+
     static ComputeConfig()
     {
         var url = Environment.GetEnvironmentVariable("RHINO_COMPUTE_URL");
-        ComputeServer.WebAddress = string.IsNullOrWhiteSpace(url) ? DefaultUrl : url.Trim();
+        HasCustomUrl = !string.IsNullOrWhiteSpace(url);
+        ComputeServer.WebAddress = HasCustomUrl ? url!.Trim() : DefaultUrl;
         ComputeServer.ApiKey = Environment.GetEnvironmentVariable("RHINO_COMPUTE_API_KEY") ?? string.Empty;
         ComputeServer.AuthToken = Environment.GetEnvironmentVariable("RHINO_COMPUTE_AUTH") ?? string.Empty;
     }
