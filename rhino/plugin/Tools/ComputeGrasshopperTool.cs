@@ -7,6 +7,7 @@ namespace RhMcp.Tools;
 public static class ComputeGrasshopperTool
 {
     [McpServerTool(Name = "compute_grasshopper")]
+    [BackgroundThread]
     [Description("Solve a Grasshopper definition (.gh / .ghx) on a Rhino Compute server (NOT in the current Rhino doc). `definition` is either a URL or an absolute file path readable by the plugin process. `inputs` is a JSON object mapping input parameter names (e.g. \"RH_IN:radius\") to an array of primitive values placed at path {0}. Returns JSON with serverUrl, outputs (array of { paramName, branches }), and error fields. Server URL comes from RHINO_COMPUTE_URL (defaults to http://localhost:6500).")]
     public static string ComputeGrasshopper(
         [Description("Definition source: an http(s) URL to a hosted .gh/.ghx, or an absolute path to a local file.")] string definition,

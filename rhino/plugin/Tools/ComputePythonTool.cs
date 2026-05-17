@@ -8,6 +8,7 @@ namespace RhMcp.Tools;
 public static class ComputePythonTool
 {
     [McpServerTool(Name = "compute_python")]
+    [BackgroundThread]
     [Description("Evaluate a Python 3 script on a Rhino Compute server (NOT in the current Rhino doc). Use this for headless geometry work that doesn't need the live document. `inputs` is a JSON object whose top-level fields become script variables. `outputs` is an array of variable names the script must assign — those values are returned in the result `outputs` field. Returns JSON with serverUrl, outputs, and error fields; error is null on success. Server URL comes from RHINO_COMPUTE_URL (defaults to http://localhost:6500). The compute Python sandbox only allows Rhino-namespaced imports (`import Rhino.Geometry as rg`, `import rhinoscriptsyntax as rs`) — the stdlib (`math`, `os`, `sys`), `clr`, and `from X import Y` syntax are blocked. Use literals (e.g. `pi = 3.141592653589793`) or Rhino APIs instead.")]
     public static string ComputePython(
         [Description("Python 3 script. Read inputs by name (e.g. `radius`) and assign each output variable listed in `outputs`. Only Rhino-namespaced imports are permitted; no stdlib, no `from … import …`.")] string script,
