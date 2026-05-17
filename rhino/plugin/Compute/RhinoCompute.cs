@@ -204,7 +204,7 @@ namespace Rhino.Compute
         public static ArchivableDictionary Evaluate(string script, ArchivableDictionary input, string[] outputNames)
         {
             return ComputeServer.PostWithConverter<ArchivableDictionary>(
-                "rhino/python/evaluate-string_archivabledictionary_stringarray",
+                RhMcp.Compute.ComputeRoutes.PythonEvaluatePath(),
                 new ArchivableDictionaryResolver(),
                 script,
                 input,
