@@ -22,6 +22,7 @@ builder.Services.AddSingleton<RhinoCrashReportFinder>();
 builder.Services.AddSingleton<SlotStore>();
 builder.Services.AddSingleton<RhinoManager>();
 builder.Services.AddSingleton<ProxyDispatcher>();
+builder.Services.AddSingleton<RouterId>();
 builder.Services.AddHttpClient();
 
 // JsonSerializerOptions used by the MCP server for tool arg/return serialization.

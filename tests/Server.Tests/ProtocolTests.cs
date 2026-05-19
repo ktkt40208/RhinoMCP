@@ -5,7 +5,7 @@ using RhMcp.Server;
 namespace RhMcp.Server.Tests;
 
 [TestFixture]
-internal class ProtocolTests
+public class ProtocolTests
 {
     private static JsonElement Serialize<T>(T value)
     {
@@ -50,14 +50,14 @@ internal class ProtocolTests
         Assert.That(error.GetProperty("message").GetString(), Is.EqualTo("bad"));
     }
 
-    [TestCase(JsonRpcErrorCode.ParseError, -32700)]
-    [TestCase(JsonRpcErrorCode.InvalidRequest, -32600)]
-    [TestCase(JsonRpcErrorCode.MethodNotFound, -32601)]
-    [TestCase(JsonRpcErrorCode.InvalidParams, -32602)]
-    [TestCase(JsonRpcErrorCode.InternalError, -32603)]
-    public void Error_code_values_match_json_rpc_2_0_spec(JsonRpcErrorCode code, int expected)
+    [TestCase((int)JsonRpcErrorCode.ParseError, -32700)]
+    [TestCase((int)JsonRpcErrorCode.InvalidRequest, -32600)]
+    [TestCase((int)JsonRpcErrorCode.MethodNotFound, -32601)]
+    [TestCase((int)JsonRpcErrorCode.InvalidParams, -32602)]
+    [TestCase((int)JsonRpcErrorCode.InternalError, -32603)]
+    public void Error_code_values_match_json_rpc_2_0_spec(int code, int expected)
     {
-        Assert.That((int)code, Is.EqualTo(expected));
+        Assert.That(code, Is.EqualTo(expected));
     }
 
     // JSON-RPC 2.0 §5: parse-error and invalid-request responses must emit

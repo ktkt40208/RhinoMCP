@@ -1,3 +1,5 @@
+using System.Threading.Tasks;
+
 namespace RhMcp.Internal;
 
 // Router-private control tools. The router talks to these over the same MCP
@@ -65,5 +67,33 @@ public static class RouterControlTool
         bool ok = false;
         RhinoApp.InvokeAndWait(() => { ok = RhinoMcpHost.StopByPort(port); });
         return JsonSerializer.Serialize(new { closed = ok });
+    }
+
+    // _Exit shows a save-changes dialog for modified docs, which would deadlock
+    // the router waiting for a process exit that never happens. Clear Modified
+    // on every doc first, then fire _Exit on a delayed background task so this
+    // HTTP response can unwind before Rhino starts tearing itself down.
+    [McpServerTool(Name = "_router_quit_app")]
+    [Description("Router-internal: schedule a graceful Rhino exit via _Exit. Returns immediately; the actual quit fires shortly after on the UI thread.")]
+    public static string QuitApp()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(200).ConfigureAwait(false);
+                RhinoApp.InvokeAndWait(() =>
+                {
+                    foreach (RhinoDoc doc in RhinoDoc.OpenDocuments(true))
+                        doc.Modified = false;
+                    RhinoApp.RunScript("_Exit", false);
+                });
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine($"[Rhino MCP] _Exit dispatch failed: {ex.Message}");
+            }
+        });
+        return JsonSerializer.Serialize(new { scheduled = true });
     }
 }

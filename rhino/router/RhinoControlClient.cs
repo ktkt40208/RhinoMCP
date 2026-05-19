@@ -28,6 +28,12 @@ public class RhinoControlClient(IHttpClientFactory httpFactory, ILogger<RhinoCon
         return PostAsync(endpoint, "_router_close_listener", argsJson, ct);
     }
 
+    public Task QuitAppAsync(string endpoint, CancellationToken ct)
+    {
+        var argsJson = JsonSerializer.SerializeToNode(new QuitAppArgs(), RouterJsonContext.Default.QuitAppArgs)!;
+        return PostAsync(endpoint, "_router_quit_app", argsJson, ct);
+    }
+
     private async Task<string> PostAsync(string endpoint, string toolName, JsonNode args, CancellationToken ct)
     {
         var payload = new JsonRpcRequest(

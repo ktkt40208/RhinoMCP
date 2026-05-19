@@ -15,6 +15,10 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)/obj/**</DefaultItemExcludes>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Router.Tests" />
+  </ItemGroup>
+
   <!--
     Publish settings split by RID. Gated on RuntimeIdentifier so plain
     `dotnet build` (used by tests and dev loops) stays framework-dependent.

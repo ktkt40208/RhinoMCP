@@ -4,7 +4,7 @@ using RhMcp.Server;
 namespace RhMcp.Server.Tests;
 
 [TestFixture]
-internal class ResultUnwrapperTests
+public class ResultUnwrapperTests
 {
     [Test]
     public async Task Null_unwraps_to_null()

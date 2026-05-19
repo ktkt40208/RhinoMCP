@@ -7,7 +7,7 @@ using RhMcp.Server;
 namespace RhMcp.Server.Tests;
 
 [TestFixture]
-internal class ParameterBinderTests
+public class ParameterBinderTests
 {
     private enum Mode { On, Off }
 

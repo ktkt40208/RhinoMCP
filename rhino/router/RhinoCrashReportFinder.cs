@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -5,16 +6,19 @@ using Microsoft.Extensions.Logging;
 namespace RhMcp.Router;
 
 // When a child Rhino crashes, the router only sees "connection refused" — the
-// HTTP channel went down with the process. macOS, however, writes a crash
-// report to ~/Library/Logs/DiagnosticReports/Rhinoceros-*.ips a few seconds
-// later. This class digs the latest one out and extracts the agent-useful
-// parts (signal, abort reason, top of the faulting stack) so we can surface
-// the actual crash cause instead of just "it died".
-//
-// macOS-only. Windows (WER / Rhino's own crash dumps) is a TODO.
+// HTTP channel went down with the process. The OS (and Rhino itself) writes a
+// crash artifact a few seconds later: .ips on macOS; on Windows either a
+// RhinoDotNetCrash.txt on the desktop (for unhandled CLR exceptions) or a
+// minidump under McNeel\Rhinoceros\... / WER LocalDumps. This class digs the
+// latest one out and extracts the agent-useful parts so we can surface the
+// actual crash cause instead of just "it died".
 public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
 {
     private const int MaxFrames = 12;
+    private const uint MinidumpSignature = 0x504D444D; // 'MDMP'
+    private const uint MinidumpStreamException = 6;
+    private const uint MinidumpStreamMiscInfo = 15;
+    private const uint MiscInfo1ProcessId = 0x1;
     private static readonly TimeSpan FuzzyMatchWindow = TimeSpan.FromMinutes(5);
 
     // Most-recent-within-FuzzyMatchWindow. Use when we know "a Rhino just died"
@@ -22,15 +26,20 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
     // as an HttpRequestException several call layers up from the lead's record).
     public RhinoCrashReport? TryFindMostRecent() => TryFind(pid: null);
 
-    // Look for the .ips matching this pid first; if none does (the report may
-    // not be written yet, or the pid was reused), fall back to the most recent
-    // Rhinoceros-*.ips inside FuzzyMatchWindow. Pass `null` to skip the pid-match
-    // phase entirely. Returns null on Windows, when the directory is missing,
-    // or when nothing plausible is found.
+    // Look for the crash artifact matching this pid first; if none does (the
+    // report may not be written yet, or the pid was reused), fall back to the
+    // most recent Rhino crash inside FuzzyMatchWindow. Pass `null` to skip the
+    // pid-match phase entirely. Returns null when the platform isn't supported,
+    // the artifact directory is missing, or nothing plausible is found.
     public RhinoCrashReport? TryFind(int? pid)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return null;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return TryFindMac(pid);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return TryFindWindows(pid);
+        return null;
+    }
 
+    private RhinoCrashReport? TryFindMac(int? pid)
+    {
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Library", "Logs", "DiagnosticReports");
@@ -49,28 +58,123 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
             log.LogDebug("Failed to list crash reports in {Dir}: {Error}", dir, ex.Message);
             return null;
         }
+        return SelectReport(candidates, pid, TryParseIps);
+    }
+
+    // Windows: priority order is RhinoDotNetCrash.txt → Rhino's own crash dump
+    // folders → Windows Error Reporting LocalDumps. The .txt is checked first
+    // because it carries the actual managed exception type, message, and stack —
+    // the agent-actionable shape that .dmp parsing without symbols can't recover.
+    // .dmps from Rhino's CrashDumper.exe are next; they exist whether or not the
+    // user has configured WER LocalDumps in the registry. WER is the last resort.
+    private RhinoCrashReport? TryFindWindows(int? pid)
+    {
+        RhinoCrashReport? dotnet = TryFindRhinoDotNetCrash();
+        if (dotnet is not null) return dotnet;
+
+        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(local)) return null;
+
+        List<FileInfo> candidates = new();
+        AppendRhinoCrashDumps(candidates, Path.Combine(local, "McNeel", "Rhinoceros"));
+        AppendDumpDir(candidates, Path.Combine(local, "CrashDumps"), "Rhino*.dmp");
+        if (candidates.Count == 0) return null;
+
+        candidates.Sort((a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+        return SelectReport(candidates.ToArray(), pid, TryParseMinidump);
+    }
+
+    // RhinoDotNetCrash.txt is what Rhino's managed UnhandledException handler
+    // writes when a CLR exception escapes the message loop. There's only ever
+    // one (Rhino overwrites it on each crash) and it has no pid, so the only
+    // useful check is "was it written recently". The fuzzy window's "most recent
+    // crash is overwhelmingly likely to be ours" assumption applies — same as
+    // the macOS fuzzy fallback.
+    private RhinoCrashReport? TryFindRhinoDotNetCrash()
+    {
+        foreach (string dir in EnumerateDesktopDirs())
+        {
+            string path = Path.Combine(dir, "RhinoDotNetCrash.txt");
+            if (!File.Exists(path)) continue;
+
+            FileInfo info;
+            try { info = new FileInfo(path); }
+            catch { continue; }
+            if (DateTime.UtcNow - info.LastWriteTimeUtc > FuzzyMatchWindow) continue;
+
+            RhinoCrashReport? report = TryParseDotNetCrash(path);
+            if (report is not null) return report;
+        }
+        return null;
+    }
+
+    // SpecialFolder.Desktop follows OneDrive redirection, but Rhino has been
+    // known to write to the literal %USERPROFILE%\Desktop regardless. Probe
+    // both so we don't miss the file under either layout.
+    private static IEnumerable<string> EnumerateDesktopDirs()
+    {
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        string special = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        if (!string.IsNullOrEmpty(special) && seen.Add(special)) yield return special;
+
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(profile))
+        {
+            string fallback = Path.Combine(profile, "Desktop");
+            if (seen.Add(fallback)) yield return fallback;
+        }
+    }
+
+    // RhinoDotNetCrash.txt is just the [ERROR] FATAL UNHANDLED EXCEPTION block —
+    // the same shape we already parse out of macOS asiBacktraces, with no header
+    // or pid. CaptureTime comes from the file's mtime (the only timestamp source).
+    internal RhinoCrashReport? TryParseDotNetCrash(string path)
+    {
+        try
+        {
+            string text = File.ReadAllText(path);
+            var (exception, frames) = ParseManagedExceptionText(text);
+            if (exception is null) return null;
+
+            string captureTime = new FileInfo(path).LastWriteTimeUtc
+                .ToString("o", CultureInfo.InvariantCulture);
+            return new RhinoCrashReport(
+                Path: path,
+                CaptureTime: captureTime,
+                BuildVersion: null,
+                Signal: null,
+                Termination: null,
+                Asi: null,
+                ManagedException: exception,
+                ManagedFrames: frames,
+                TopFrames: Array.Empty<string>());
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug("Failed to parse RhinoDotNetCrash.txt at {Path}: {Error}", path, ex.Message);
+            return null;
+        }
+    }
+
+    private RhinoCrashReport? SelectReport(FileInfo[] candidates, int? pid, Func<string, ParsedReport?> parser)
+    {
         if (candidates.Length == 0) return null;
 
-        // Phase 1: pid match wins. Walk newest→oldest so we don't grab a
-        // recycled-pid match from days ago. Skipped when caller passes null.
         if (pid is int wantPid)
         {
             foreach (var fi in candidates)
             {
-                var parsed = TryParse(fi.FullName);
+                var parsed = parser(fi.FullName);
                 if (parsed is null) continue;
                 if (parsed.MatchedPid == wantPid) return parsed.Report;
             }
         }
 
-        // Phase 2: fuzzy fallback. The most recent Rhino crash within the last
-        // few minutes is overwhelmingly likely to be ours, especially when the
-        // .ips for the specific pid hasn't finished writing yet.
         var cutoff = DateTime.UtcNow - FuzzyMatchWindow;
         foreach (var fi in candidates)
         {
             if (fi.LastWriteTimeUtc < cutoff) break;
-            var parsed = TryParse(fi.FullName);
+            var parsed = parser(fi.FullName);
             if (parsed is null) continue;
             log.LogDebug("Crash report pid match for {Pid} not found; falling back to most recent ({Path})",
                 pid?.ToString() ?? "(unspecified)", fi.FullName);
@@ -79,11 +183,42 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
         return null;
     }
 
+    private void AppendRhinoCrashDumps(List<FileInfo> sink, string rhinoRoot)
+    {
+        if (!Directory.Exists(rhinoRoot)) return;
+
+        string[] versionDirs;
+        try { versionDirs = Directory.GetDirectories(rhinoRoot); }
+        catch (Exception ex)
+        {
+            log.LogDebug("Failed to enumerate Rhino version dirs at {Dir}: {Error}", rhinoRoot, ex.Message);
+            return;
+        }
+
+        foreach (string vdir in versionDirs)
+        {
+            foreach (string folder in new[] { "Crash Reports", "CrashDumps", "Crashes" })
+            {
+                AppendDumpDir(sink, Path.Combine(vdir, folder), "*.dmp");
+            }
+        }
+    }
+
+    private void AppendDumpDir(List<FileInfo> sink, string dir, string pattern)
+    {
+        if (!Directory.Exists(dir)) return;
+        try { sink.AddRange(new DirectoryInfo(dir).GetFiles(pattern)); }
+        catch (Exception ex)
+        {
+            log.LogDebug("Failed to list dumps in {Dir}: {Error}", dir, ex.Message);
+        }
+    }
+
     // .ips format: line 1 is a small JSON header, the rest of the file is the
     // full crash-report JSON body. Both are valid JSON in isolation. We use
     // JsonDocument (no source-gen) because we're navigating an external,
     // open-ended schema — typed deserialization would be brittle.
-    private ParsedReport? TryParse(string path)
+    private ParsedReport? TryParseIps(string path)
     {
         try
         {
@@ -230,8 +365,6 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
     // contain the expected markers (older Rhinos / non-managed crashes).
     private static (string? Exception, string[] Frames) ExtractManagedException(JsonElement root)
     {
-        const int MaxManagedFrames = 10;
-
         if (!root.TryGetProperty("asiBacktraces", out var ab) || ab.ValueKind != JsonValueKind.Array)
             return (null, Array.Empty<string>());
 
@@ -242,7 +375,15 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
             if (entry.ValueKind != JsonValueKind.String) continue;
             sb.AppendLine(entry.GetString());
         }
-        var text = sb.ToString();
+        return ParseManagedExceptionText(sb.ToString());
+    }
+
+    // Shared between the macOS asiBacktraces block and the Windows
+    // RhinoDotNetCrash.txt body — both wrap the same `[ERROR] FATAL UNHANDLED
+    // EXCEPTION: ... [END ERROR]` shape with `at <Frame> in <path>:line N` rows.
+    private static (string? Exception, string[] Frames) ParseManagedExceptionText(string text)
+    {
+        const int MaxManagedFrames = 10;
         if (text.Length == 0) return (null, Array.Empty<string>());
 
         // Scope to the FATAL UNHANDLED EXCEPTION block — everything after
@@ -299,6 +440,113 @@ public class RhinoCrashReportFinder(ILogger<RhinoCrashReportFinder> log)
         }
         return head;
     }
+
+    // Minidump (.dmp) parser. We avoid dbghelp.dll P/Invoke — symbol resolution
+    // needs Rhino's PDBs, which we don't ship. Reading just the header + Exception
+    // and MiscInfo streams gets us the agent-actionable bits: pid (to confirm
+    // ownership), capture time, and the exception code. Native + managed stacks
+    // stay empty on Windows — there's no equivalent of asiBacktraces in a bare
+    // minidump.
+    private ParsedReport? TryParseMinidump(string path)
+    {
+        try
+        {
+            using FileStream fs = File.OpenRead(path);
+            using BinaryReader br = new(fs);
+
+            if (fs.Length < 32) return null;
+            uint signature = br.ReadUInt32();
+            if (signature != MinidumpSignature) return null;
+            _ = br.ReadUInt32(); // Version
+            uint numStreams = br.ReadUInt32();
+            uint streamDirRva = br.ReadUInt32();
+            _ = br.ReadUInt32(); // CheckSum
+            uint timeDateStamp = br.ReadUInt32();
+            _ = br.ReadUInt64(); // Flags
+
+            string captureTime = DateTimeOffset.FromUnixTimeSeconds(timeDateStamp)
+                .UtcDateTime.ToString("o", CultureInfo.InvariantCulture);
+
+            int? procId = null;
+            uint? exCode = null;
+            ulong? exAddr = null;
+
+            if (numStreams > 4096 || streamDirRva + numStreams * 12 > fs.Length) return null;
+            fs.Seek(streamDirRva, SeekOrigin.Begin);
+            (uint Type, uint Size, uint Rva)[] dirs = new (uint, uint, uint)[numStreams];
+            for (int i = 0; i < numStreams; i++)
+            {
+                dirs[i] = (br.ReadUInt32(), br.ReadUInt32(), br.ReadUInt32());
+            }
+
+            foreach (var d in dirs)
+            {
+                if (d.Type == MinidumpStreamException && d.Size >= 32 && d.Rva + 32 <= fs.Length)
+                {
+                    fs.Seek(d.Rva, SeekOrigin.Begin);
+                    _ = br.ReadUInt32(); // ThreadId
+                    _ = br.ReadUInt32(); // __alignment
+                    exCode = br.ReadUInt32();
+                    _ = br.ReadUInt32(); // ExceptionFlags
+                    _ = br.ReadUInt64(); // ExceptionRecord
+                    exAddr = br.ReadUInt64();
+                }
+                else if (d.Type == MinidumpStreamMiscInfo && d.Size >= 12 && d.Rva + 12 <= fs.Length)
+                {
+                    fs.Seek(d.Rva, SeekOrigin.Begin);
+                    _ = br.ReadUInt32(); // SizeOfInfo
+                    uint flags1 = br.ReadUInt32();
+                    uint pidValue = br.ReadUInt32();
+                    if ((flags1 & MiscInfo1ProcessId) != 0) procId = (int)pidValue;
+                }
+            }
+
+            // WER LocalDumps name dumps "Rhino.exe.<pid>.dmp" — extract from the
+            // filename when MiscInfo didn't carry pid.
+            procId ??= ExtractPidFromWerName(path);
+
+            string? signal = exCode is uint c ? $"0x{c:X8}" : null;
+            string? termination = exCode is uint code ? DescribeExceptionCode(code) : null;
+            string? asi = exAddr is ulong a ? $"ExceptionAddress: 0x{a:X16}" : null;
+
+            return new ParsedReport(procId, new RhinoCrashReport(
+                Path: path,
+                CaptureTime: captureTime,
+                BuildVersion: null,
+                Signal: signal,
+                Termination: termination,
+                Asi: asi,
+                ManagedException: null,
+                ManagedFrames: Array.Empty<string>(),
+                TopFrames: Array.Empty<string>()));
+        }
+        catch (Exception ex)
+        {
+            log.LogDebug("Failed to parse minidump at {Path}: {Error}", path, ex.Message);
+            return null;
+        }
+    }
+
+    private static int? ExtractPidFromWerName(string path)
+    {
+        string name = Path.GetFileNameWithoutExtension(path);
+        int lastDot = name.LastIndexOf('.');
+        if (lastDot < 0) return null;
+        return int.TryParse(name[(lastDot + 1)..], out int pid) ? pid : null;
+    }
+
+    private static string DescribeExceptionCode(uint code) => code switch
+    {
+        0xC0000005 => "EXCEPTION_ACCESS_VIOLATION",
+        0xC0000094 => "EXCEPTION_INT_DIVIDE_BY_ZERO",
+        0xC00000FD => "EXCEPTION_STACK_OVERFLOW",
+        0xC000013A => "STATUS_CONTROL_C_EXIT",
+        0xC0000409 => "STATUS_STACK_BUFFER_OVERRUN",
+        0xC0000374 => "STATUS_HEAP_CORRUPTION",
+        0xE0434352 => "CLR_EXCEPTION",
+        0xE06D7363 => "CPP_EXCEPTION",
+        _ => $"crashed (code 0x{code:X8})",
+    };
 
     private sealed record ParsedReport(int? MatchedPid, RhinoCrashReport Report);
 }

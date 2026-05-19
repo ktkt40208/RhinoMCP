@@ -54,6 +54,7 @@ jobs:
         if: matrix.rhino_target == 'R9'
         run: dotnet build rhino/router/Router.csproj --configuration Release --no-restore
 
+      # NOTE: tests/Integration.Tests is intentionally excluded
       - name: Test router
         if: matrix.rhino_target == 'R9'
         run: dotnet test tests/Router.Tests/Router.Tests.csproj --configuration Release --verbosity normal

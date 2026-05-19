@@ -29,7 +29,7 @@ internal sealed class NotADecoratedType
 }
 
 [TestFixture]
-internal class ResourceRegistryTests
+public class ResourceRegistryTests
 {
     private static IServiceProvider EmptyServices()
         => new ServiceCollection().BuildServiceProvider();

@@ -7,7 +7,7 @@ using RhMcp.Server;
 namespace RhMcp.Server.Tests;
 
 [TestFixture]
-internal class SchemaBuilderTests
+public class SchemaBuilderTests
 {
     private enum Color { Red, Green, Blue }
 

@@ -23,9 +23,6 @@ public class RhinoManager(
     SlotStore store,
     ILogger<RhinoManager> log)
 {
-    // Version is appended (e.g. "default-WIP") so GH2 tools don't collide with non-GH2 tools.
-    public const string DefaultSlotPrefix = "default-";
-
     // Manually-started Rhino lives on 10500; children walk forward from there.
     private const int ChildPortBase = 10500;
     private const int SpawnTimeoutSeconds = 60;
@@ -35,36 +32,33 @@ public class RhinoManager(
 
     public Task<ChildRhino> SpawnAsync(string? version = null, CancellationToken ct = default)
     {
-        var resolved = version ?? config.DefaultVersion;
+        string resolved = version ?? config.DefaultVersion;
         store.ReapStaleLaunching(StaleLaunchingMaxAge);
         ReapAllDead();
-        var (reservation, slotId) = store.ReserveNewNamed(resolved, _routerPid);
+        (SlotReservation reservation, string slotId) = store.ReserveNewNamed(resolved, _routerPid);
         return DispatchReservationAsync(resolved, slotId, reservation, ct);
     }
 
-    // Lazily return the default slot for `version`, spawning a Rhino if needed.
-    // Prefers an adopted user-started Rhino on the matching version — manual launch
-    // is the strongest signal that the user wants that Rhino used.
-    public async Task<ChildRhino> GetOrCreateDefaultAsync(string? version = null, CancellationToken ct = default)
+    // Resolves the Rhino to serve a slot-less tool call. Prefers an adopted
+    // user-started Rhino (any router), else reuses a slot this router already
+    // owns, else spawns a fresh animal-named one. `WasNewlySpawned` lets the
+    // dispatcher tell the agent via ReturnResult.autoSpawnedSlot.
+    public async Task<(ChildRhino Child, bool WasNewlySpawned)> GetOrCreateDefaultAsync(
+        string? version = null, CancellationToken ct = default)
     {
         ScanAnnouncements();
         string resolved = version ?? config.DefaultVersion;
-        string slotId = DefaultSlotPrefix + resolved;
 
-        var adopted = store.ListReady().FirstOrDefault(c => c.Adopted && c.Version == resolved);
-        if (adopted is not null) return adopted;
+        ChildRhino? adopted = store.ListReady()
+            .FirstOrDefault(c => c.Version == resolved && c.Adopted);
+        if (adopted is not null) return (adopted, false);
 
-        return await SpawnInternalAsync(resolved, slotId, ct).ConfigureAwait(false);
-    }
+        ChildRhino? mine = store.ListAllOwnedBy(_routerPid)
+            .FirstOrDefault(c => c.Status == SlotStatus.Ready && c.Version == resolved && !c.Adopted);
+        if (mine is not null) return (mine, false);
 
-    private async Task<ChildRhino> SpawnInternalAsync(string version, string slotId, CancellationToken ct)
-    {
-        // Drop stale 'launching' rows first so a crashed router doesn't make us wait 90s.
-        store.ReapStaleLaunching(StaleLaunchingMaxAge);
-        ReapAllDead();
-
-        var reservation = store.Reserve(slotId, version, _routerPid);
-        return await DispatchReservationAsync(version, slotId, reservation, ct).ConfigureAwait(false);
+        ChildRhino spawned = await SpawnAsync(resolved, ct).ConfigureAwait(false);
+        return (spawned, true);
     }
 
     private async Task<ChildRhino> DispatchReservationAsync(
@@ -245,11 +239,32 @@ public class RhinoManager(
                     return false;
                 }
             }
-            // Last slot — fall through to process kill.
+            // Last slot — fall through to cooperative quit.
         }
 
+        // Cooperative shutdown: ask Rhino to quit itself via _Exit, then wait
+        // for the OS process to actually exit. SIGKILL is reserved for the
+        // case where graceful quit doesn't land in time — it's reliable but
+        // leaves the TCP listener alive briefly, which races ScanAnnouncements.
+        log.LogInformation("Closing slot '{Slot}' cooperatively (pid {Pid})", slotId, child.Pid);
+        try
+        {
+            await control.QuitAppAsync(child.Endpoint, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Quit-app control call for slot '{Slot}' failed; falling through to kill.", slotId);
+        }
+
+        if (await WaitForProcessExitAsync(child.Pid, TimeSpan.FromSeconds(15), ct).ConfigureAwait(false))
+        {
+            store.Delete(slotId);
+            log.LogInformation("Slot '{Slot}' exited gracefully (pid {Pid})", slotId, child.Pid);
+            return true;
+        }
+
+        log.LogWarning("Slot '{Slot}' did not exit within timeout; killing pid {Pid}", slotId, child.Pid);
         store.Delete(slotId);
-        log.LogInformation("Closing slot '{Slot}' (pid {Pid})", slotId, child.Pid);
         try
         {
             Process.GetProcessById(child.Pid).Kill(entireProcessTree: true);
@@ -259,7 +274,22 @@ public class RhinoManager(
         {
             log.LogWarning(ex, "Failed to kill slot '{Slot}' (pid {Pid})", slotId, child.Pid);
         }
+        // SIGKILL is async; wait for the OS to reap the pid so callers don't
+        // observe a 'closed' slot whose process+listener are still around.
+        await WaitForProcessExitAsync(child.Pid, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
         return true;
+    }
+
+    private static async Task<bool> WaitForProcessExitAsync(int pid, TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!IsProcessAlive(pid)) return true;
+            try { await Task.Delay(100, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return !IsProcessAlive(pid); }
+        }
+        return !IsProcessAlive(pid);
     }
 
     // Shutdown path: kill each unique pid this router owns. Adopted slots and slots
@@ -293,6 +323,12 @@ public class RhinoManager(
         var c = store.Get(slotId);
         return c is null || c.Status != SlotStatus.Ready ? null : c;
     }
+
+    // Status-agnostic existence check. `Get` filters to Ready slots so callers
+    // routing tool calls don't accidentally dispatch into a half-launched slot;
+    // `close_slot` needs to see launching rows too, otherwise it falsely reports
+    // slot_not_found for a slot another router is still spawning.
+    public bool Has(string slotId) => store.Get(slotId) is not null;
 
     // Adopt any user-started Rhino announced via the drop directory. Each file is a
     // one-shot doorbell — always deleted, success or not.
