@@ -27,13 +27,21 @@ internal sealed class ConnectDialog : Dialog
         
         Resizable = false;
         Padding = new Padding(12);
-        Size = new Size(400, 260);
+        Size = new Size(400, 300);
 
-        TextArea textArea = new()
+        TextArea promptTextArea = new()
         {
             Text = Prompt(),
             ReadOnly = true,
             Wrap = true,
+            Font = Fonts.Monospace(11),
+        };
+
+        TextArea jsonTextArea = new()
+        {
+            Text = McpJson(),
+            ReadOnly = true,
+            Wrap = false,
             Font = Fonts.Monospace(11),
         };
 
@@ -43,10 +51,17 @@ internal sealed class ConnectDialog : Dialog
             Wrap = WrapMode.Word,
         };
 
+        TabControl tabs = new ();
+        TabPage promptTab = new () { Text = "Prompt", Content = promptTextArea };
+        TabPage jsonTab = new () { Text = "mcp.json", Content = jsonTextArea };
+        tabs.Pages.Add(promptTab);
+        tabs.Pages.Add(jsonTab);
+
         Button copyButton = new () { Text = "Copy" };
         copyButton.Click += (_, _) =>
         {
-            Clipboard.Instance.Text = textArea.Text;
+            TextArea active = tabs.SelectedPage == jsonTab ? jsonTextArea : promptTextArea;
+            Clipboard.Instance.Text = active.Text;
             copyButton.Text = "Copied!";
         };
 
@@ -67,7 +82,7 @@ internal sealed class ConnectDialog : Dialog
             Rows =
             {
                 new TableRow(blurb),
-                new TableRow(textArea) { ScaleHeight = true },
+                new TableRow(tabs) { ScaleHeight = true },
                 new TableRow(buttons),
             },
         };
@@ -82,6 +97,19 @@ $@"Install the Rhino MCP server. The entry is:
 ""rhino"": {{ ""command"": ""{RouterPath()}"" }}
 
 Then tell the user to reload";
+
+    private static string McpJson()
+    {
+        string escapedPath = RouterPath().Replace("\\", "\\\\");
+        return
+$@"{{
+  ""mcpServers"": {{
+    ""rhino"": {{
+      ""command"": ""{escapedPath}""
+    }}
+  }}
+}}";
+    }
 
     private static string RouterPath()
     {
