@@ -22,35 +22,55 @@ public class RhinoLocator
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
+            // Rhino 9 currently ships only as WIP, so "9" falls back to the
+            // WIP install dir when no released Rhino 9 is present. Once a
+            // real Rhino 9 ships, the first lookup will hit and the fallback
+            // becomes dead code we can drop.
             // TODO: also try registry-based lookup if Program Files paths miss.
-            string dir = version switch
+            string[] dirs = version switch
             {
-                "8" => @"C:\Program Files\Rhino 8",
-                "9" => @"C:\Program Files\Rhino 9",
-                "WIP" => @"C:\Program Files\Rhino 9 WIP",
-                _ => string.Empty
+                "8" => new[] { @"C:\Program Files\Rhino 8" },
+                "9" => new[] { @"C:\Program Files\Rhino 9", @"C:\Program Files\Rhino 9 WIP" },
+                "WIP" => new[] { @"C:\Program Files\Rhino 9 WIP" },
+                _ => Array.Empty<string>()
             };
-            if (dir.Length == 0) return false;
-            path = Path.Combine(dir, "System", "Rhino.exe");
-            return File.Exists(path);
+            foreach (string dir in dirs)
+            {
+                string candidate = Path.Combine(dir, "System", "Rhino.exe");
+                if (File.Exists(candidate))
+                {
+                    path = candidate;
+                    return true;
+                }
+            }
+            return false;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            string appName = version switch
+            // See Windows branch — "9" falls back to RhinoWIP.app while Rhino 9
+            // is still shipping as WIP.
+            string[] appNames = version switch
             {
-                "8" => "Rhino 8.app",
-                "9" => "Rhino 9.app",
-                "WIP" => "RhinoWIP.app",
-                _ => string.Empty
+                "8" => new[] { "Rhino 8.app" },
+                "9" => new[] { "Rhino 9.app", "RhinoWIP.app" },
+                "WIP" => new[] { "RhinoWIP.app" },
+                _ => Array.Empty<string>()
             };
             // Without this guard an unknown version resolves to "/Applications/",
             // which Directory.Exists trivially confirms — spawn then attempts
             // `open -a /Applications/` and we burn the full 60s startup timeout
             // before reporting failure. Fail fast with rhino_not_installed instead.
-            if (appName.Length == 0) return false;
-            path = $"/Applications/{appName}";
-            return Directory.Exists(path);
+            foreach (string appName in appNames)
+            {
+                string candidate = $"/Applications/{appName}";
+                if (Directory.Exists(candidate))
+                {
+                    path = candidate;
+                    return true;
+                }
+            }
+            return false;
         }
 
         return false;

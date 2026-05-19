@@ -5,11 +5,11 @@ namespace RhMcp.Integration.Tests;
 // Exercises spawn_slot end-to-end: the router must launch a real Rhino,
 // receive its listener announcement, and return the slot metadata.
 [TestFixture]
-internal sealed class SpawnSlotTests : SharedRouterFixture
+internal sealed class SpawnSlotTests : RouterFixture
 {
 
     [TestCase("8")]
-    [TestCase("9")] // TODO : Fails
+    [TestCase("9")]
     [TestCase("WIP")]
     public async Task spawn_slot_returns_slot_metadata(string version)
     {

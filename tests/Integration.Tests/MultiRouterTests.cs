@@ -54,13 +54,13 @@ public sealed class MultiRouterTests : SharedRouterFixture
         Assert.That(result.Payload?.GetArrayLength(), Is.EqualTo(1));
     }
 
-    // Calling list_objects for two different versions in the same router
-    // should produce two slot entries, not collapse onto one.
+    // Spawning two slots for two different versions should produce two entries
+    // in list_slots — the version is part of the slot identity, not collapsed.
     [Test]
-    public async Task list_objects_across_two_versions_produces_two_slots()
+    public async Task spawn_slot_across_two_versions_produces_two_slots()
     {
-        _ = await _router.CallToolTextAsync("list_objects", Args.Of(("version", "8")));
-        _ = await _router.CallToolTextAsync("list_objects", Args.Of(("version", "WIP")));
+        _ = await _router.CallToolAsync("spawn_slot", Args.Of(("version", "8")));
+        _ = await _router.CallToolAsync("spawn_slot", Args.Of(("version", "WIP")));
 
         ReturnResult result = await _router.CallToolAsync("list_slots");
         Assert.That(result.Payload?.GetArrayLength(), Is.EqualTo(2));

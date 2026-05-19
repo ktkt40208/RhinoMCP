@@ -35,6 +35,8 @@ public sealed class CloseSlotAgentTests : AgenticTestBase
     {
         AgentRun run = await Agent
             .WithAllowedTools("mcp__rhino__close_slot")
+            .WithBuiltinTools("")
+            .WithWorkingDirectory(_isolatedTempDir)
             .WithSystemPrompt(
                 "You are an integration test harness. Call exactly the tools requested. " +
                 "When reporting results, include the raw JSON the tool returned.")

@@ -7,10 +7,6 @@ namespace RhMcp.Integration.Tests;
 public sealed class DocLifecycleTests : SharedRouterFixture
 {
 
-    // TODO : Close without a path doesn't work on mac? Get's stuck waiting for a path
-    // close_doc returns a plain string message ("Document closed without saving.",
-    // etc.). The earlier version of this test asserted it returned an empty JSON
-    // array, which never matched the contract in CloseDocTool.cs.
     [TestCase("8")]
     [TestCase("WIP")]
     public async Task close_doc_in_spawned_slot_returns_closed_message(string version)
