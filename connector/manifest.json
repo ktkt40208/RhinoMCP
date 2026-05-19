@@ -4,13 +4,13 @@
   "display_name": "Rhino MCP Platform",
   "version": "0.1.0",
   "description": "Desktop Connector for Rhino3d and Grasshopper",
-  "long_description": "Bridges Claude to Rhino3d and Grasshopper. Requires the Rhino-MCP-Platform Rhino plugin to be installed via Rhino's PackageManager.",
+  "long_description": "Bridges Claude to Rhino 3D and Grasshopper, letting Claude drive an installed copy of Rhino to model geometry, inspect documents, capture viewport images, and author/edit Grasshopper 1 and Grasshopper 2 definitions. Claude can run Rhino commands, execute Python or C# scripts inside the Rhino process, place and wire Grasshopper components, solve canvases, and manage layers, selections, and cameras. The connector runs a small local router (`router-launcher.mjs`) over stdio; the router spawns or attaches to local Rhino instances and forwards MCP tool calls to the Rhino-MCP-Platform plugin running inside them. Requires Rhino 8 or Rhino 9 WIP installed on macOS or Windows, with the Rhino-MCP-Platform plugin installed via Rhino's PackageManager. No data leaves the user's machine.",
   "author": {
     "name": "McNeel",
     "email": "callum@mcneel.com",
     "url": "https://github.com/mcneel/"
   },
-  "homepage": "http://www.mcneel.com",
+  "homepage": "https://www.mcneel.com",
   "documentation": "https://github.com/mcneel/RhinoMCP#readme",
   "support": "https://discourse.mcneel.com/c/rhino/artificial-intelligence-rhino/162",
   "icon": "icon.png",
@@ -42,8 +42,8 @@
   "prompts": [
     {
       "name": "getting-started",
-      "description": "Useful for your first time trying the Rhino3D claude desktop connector",
-      "text": "TODO: Claude fill this in would ya?"
+      "description": "Walk through first-time setup of the Rhino 3D MCP connector.",
+      "text": "I'd like to try the Rhino 3D MCP connector for the first time. Help me confirm everything is wired up correctly: check that a Rhino slot is reachable, spawn one if not, then ask me what I'd like to build and create a simple example (e.g. a box) in Rhino so I can verify the connection end-to-end."
     }
   ],
   "compatibility": {
