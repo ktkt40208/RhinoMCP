@@ -18,11 +18,11 @@ keywords:
 This guide assumes you have <a href="https://www.rhino3d.com/download/">Rhino 3D</a> already installed and licensed.
 </blockquote>
 
-In about ten minutes you'll have your AI assistant making geometry in your Rhino window. We'll do it in a couple steps:
+In about ten minutes you'll have your AI assistant making geometry in your Rhino and/or Grasshopper window. We'll do it in a couple steps:
 
 ## Pick an AI assistant
 
-Any AI assistant that speaks the [Model Context Protocol](https://modelcontextprotocol.io) can drive Rhino. *Choose one of the AI assistants below to continue.*
+Any AI assistant that speaks the [Model Context Protocol](https://modelcontextprotocol.io) can drive Rhino & Grasshopper. *Choose one of the AI assistants below to continue.*
 
 {{< cards >}}
 
