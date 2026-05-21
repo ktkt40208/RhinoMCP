@@ -5,12 +5,15 @@ weight: 6
 next: docs/troubleshooting
 author: Callum
 editor: SteveF
+draft: true
 keywords:
   - WPF
   - Eto.Forms
   - cross-platform UI
   - Mac
 ---
+
+// Use https://github.com/dalefugier/SampleCsChromium
 
 If your Rhino plugin's UI is built on WPF, it only runs on Windows. Porting
 it to [Eto.Forms](https://github.com/picoe/Eto), the cross-platform
@@ -48,11 +51,14 @@ tells you very little about whether the result is usable.
 ## A prompt to start with
 
 {{< prompt >}}
-This plugin's UI is WPF and only runs on Windows. Port each WPF window to
-an Eto.Forms equivalent so the plugin works on Rhino for Mac as well.
-Work one window at a time: convert it, build, load the plugin into the
-Rhino I have open, run the command that shows the dialog, and confirm it
-renders before moving on. Show me the diff before each file change.
+Convert a legacy Rhino WinForms plug-in to Rhino 8 / net8.0 / Eto.Forms.
+
+SDK-style csproj: net8.0, <TargetExt>.rhp</TargetExt>, <GenerateAssemblyInfo>false</GenerateAssemblyInfo>, single RhinoCommon 8.x PackageReference. Drop packages.config, post-build hacks, per-arch configs.
+Replace WinForms controls with Eto.Forms equivalents. Preserve any panel [Guid].
+git rm *.Designer.cs, *.resx, Resources.*, packages.config.
+Collapse .sln to Any CPU with SDK project type GUID.
+Add .vscode/launch.json + tasks.json from the Rhino template.
+Verify dotnet build is clean.
 {{< /prompt >}}
 
 If you have a mix of dialogs and dockable panels, tell the assistant

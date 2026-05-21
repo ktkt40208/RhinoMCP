@@ -19,16 +19,14 @@ confirm it works.
 Start a new chat or session and ask:
 
 {{< prompt >}}
-Open a fresh Rhino doc and make me a torus, then take a screenshot
-and show me how it looks.
+Open a fresh Rhino doc and make me a box.
 {{< /prompt >}}
 
 If everything's wired up:
 
 - Rhino will launch (if it wasn't already running).
-- A torus will appear.
-- Your assistant will reply describing what it did. Claude Desktop
-  will include the screenshot inline.
+- A box will appear.
+- Your assistant will reply describing what it did.
 
 If anything goes sideways, [Troubleshooting](../troubleshooting) is your
 friend.

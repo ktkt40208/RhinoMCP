@@ -4,6 +4,7 @@ linkTitle: Make this parametric
 weight: 3
 author: Callum
 editor: SteveF
+draft: true
 keywords:
   - parametric
   - Grasshopper

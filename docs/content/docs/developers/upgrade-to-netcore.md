@@ -12,9 +12,9 @@ keywords:
   - Claude Code
 ---
 
-If you have a Rhino plugin still targeting `net48`, you'll want to move it
-to `net7.0` (Rhino 8) or `net8.0` (Rhino 8 recent / Rhino 9). This page
-showcases how you can use the Rhino MCP to facilitate this upgrade.
+// USE https://github.com/sbaer/selcommands as an example
+
+If you have a Rhino plugin still targeting `net45` or `net48`, you'll want to move it to `net8.0` (Rhino 8) or `net10.0` (Rhino 9 WIP). This page showcases how you can use the RhinoMCP to makes this upgrade seamless.
 
 ## What you need
 
@@ -40,11 +40,18 @@ asking you to copy errors back and forth.
 ## A prompt to start with
 
 {{< prompt >}}
-This repo is a Rhino plugin targeting `net48`. Convert it to multi-target
-both `net48` and `net8.0` so it builds for Rhino 7 and Rhino 8. Work one
-error at a time, build after each change, and once it builds cleanly load
-it into Rhino and run each of its commands to confirm nothing regressed.
-Show me the diff before each file change.
+Upgrade this legacy RhinoCommon plugin to a modern Rhino 8 plugin per the
+McNeel CSRhino template:
+https://github.com/mcneel/RhinoVisualStudioExtensions/tree/main/Rhino.Templates/content/CSRhino
+
+- SDK-style csproj, TargetFrameworks=net8.0;net48, EnableDynamicLoading,
+  TargetExt=.rhp, RhinoCommon via NuGet (ExcludeAssets="runtime")
+- Move Title/Company/Description/Version into the csproj; keep PlugInDescription
+  attrs and the original Guid in AssemblyInfo.cs
+- Add .vscode/launch.json + tasks.json from the template, Rhino 8 only
+  (netcore Mac+Win, netfx Win), pointed at this project
+- Don't touch command sources unless an API changed
+- `dotnet build` to verify both TFMs
 {{< /prompt >}}
 
 Adjust the target framework and "show me the diff" cadence to taste.
