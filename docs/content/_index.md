@@ -37,11 +37,11 @@ keywords:
 <p class="scene-line scene-line-11 scene-finale"><em>With <span class="rhino-mcp">Rhino MCP</span>, digital design culture has shifted... <strong>again.</strong></em></p>
 </section>
 
-## ✨ What is the Rhino MCP Platform?
+## ✨ What is the **Rhino MCP** Platform?
 
 <div class="lead">
 
-The Rhino MCP Platform is a free MCP from McNeel, the makers of Rhino & Grasshopper, that connects our software to AI assistants like {{< icon "claude" >}} **Claude**, {{< icon "github" >}} **GitHub Copilot**, {{< icon "chatgpt" >}} **Codex**, {{< icon "gemini" >}} **Gemini**, and {{< icon "lmstudio" >}} **Local LLMs**. Once Rhino MCP is installed, your assistant can see what's in your Rhino & Grasshopper files, create geometry, run commands, write & edit scripts, and build Grasshopper definitions.
+The **Rhino MCP Platform** is a free MCP from McNeel, the makers of Rhino & Grasshopper, that connects our software to AI assistants like {{< icon "claude" >}} **Claude**, {{< icon "github" >}} **GitHub Copilot**, {{< icon "chatgpt" >}} **Codex**, {{< icon "gemini" >}} **Gemini**, and {{< icon "lmstudio" >}} **Local LLMs**. Once **Rhino MCP** is installed, your assistant can see what's in your Rhino & Grasshopper files, create geometry, run commands, write & edit scripts, and build Grasshopper definitions.
 
 </div>
 
@@ -63,8 +63,7 @@ The Rhino MCP Platform is a free MCP from McNeel, the makers of Rhino & Grasshop
 
 {{< /cards >}}
 
-
-## 💡 What can I do with Rhino MCP?
+## 💡 What can I do with **Rhino MCP**?
 
 {{< cards >}}
 
