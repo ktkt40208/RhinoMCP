@@ -57,8 +57,8 @@ public static class RhinoMcpHost
         return true;
     }
 
-    // Shared dispatch for both the interactive `RhinoMCP` command and the
-    // hidden `StartMCP` autostart path. Writes user-facing status lines.
+    // Shared dispatch for both the interactive `MCPStart` command and the
+    // hidden `MCPSpawn` autostart path. Writes user-facing status lines.
     public static bool StartOrRestart(RhinoDoc doc, int port)
     {
         if (HasStarted(doc))

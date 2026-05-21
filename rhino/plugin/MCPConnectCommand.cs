@@ -6,9 +6,9 @@ using RhinoCommand = Rhino.Commands.Command;
 
 namespace RhMcp;
 
-public class ConnectCommand : RhinoCommand
+public class MCPConnectCommand : RhinoCommand
 {
-    public override string EnglishName => "RhinoMCPConnect";
+    public override string EnglishName => "MCPConnect";
 
     protected override Rhino.Commands.Result RunCommand(RhinoDoc doc, Rhino.Commands.RunMode mode)
     {
@@ -23,13 +23,13 @@ internal sealed class ConnectDialog : Dialog
 
     public ConnectDialog()
     {
-        Title = "Connect RhinoMCP to your AI Agent";
+        Title = "Connect Rhino to your AI Agent";
         
         Resizable = false;
         Padding = new Padding(12);
-        Size = new Size(400, 260);
+        Size = new Size(400, 300);
 
-        TextArea textArea = new()
+        TextArea promptTextArea = new()
         {
             Text = Prompt(),
             ReadOnly = true,
@@ -37,16 +37,31 @@ internal sealed class ConnectDialog : Dialog
             Font = Fonts.Monospace(11),
         };
 
+        TextArea jsonTextArea = new()
+        {
+            Text = McpJson(),
+            ReadOnly = true,
+            Wrap = false,
+            Font = Fonts.Monospace(11),
+        };
+
         Label blurb = new ()
         {
-            Text = "Paste this prompt into your MCP-aware AI agent (e.g. Claude Code), it will handle the connection for you.",
+            Text = "Paste this prompt into your MCP-aware AI agent (e.g. Claude), it will handle the connection for you.",
             Wrap = WrapMode.Word,
         };
+
+        TabControl tabs = new ();
+        TabPage promptTab = new () { Text = "Prompt", Content = promptTextArea };
+        TabPage jsonTab = new () { Text = "mcp.json", Content = jsonTextArea };
+        tabs.Pages.Add(promptTab);
+        tabs.Pages.Add(jsonTab);
 
         Button copyButton = new () { Text = "Copy" };
         copyButton.Click += (_, _) =>
         {
-            Clipboard.Instance.Text = textArea.Text;
+            TextArea active = tabs.SelectedPage == jsonTab ? jsonTextArea : promptTextArea;
+            Clipboard.Instance.Text = active.Text;
             copyButton.Text = "Copied!";
         };
 
@@ -67,7 +82,7 @@ internal sealed class ConnectDialog : Dialog
             Rows =
             {
                 new TableRow(blurb),
-                new TableRow(textArea) { ScaleHeight = true },
+                new TableRow(tabs) { ScaleHeight = true },
                 new TableRow(buttons),
             },
         };
@@ -82,6 +97,19 @@ $@"Install the Rhino MCP server. The entry is:
 ""rhino"": {{ ""command"": ""{RouterPath()}"" }}
 
 Then tell the user to reload";
+
+    private static string McpJson()
+    {
+        string escapedPath = RouterPath().Replace("\\", "\\\\");
+        return
+$@"{{
+  ""mcpServers"": {{
+    ""rhino"": {{
+      ""command"": ""{escapedPath}""
+    }}
+  }}
+}}";
+    }
 
     private static string RouterPath()
     {

@@ -446,7 +446,7 @@ public class RhinoManager(
         catch (InvalidOperationException) { return false; }
     }
 
-    // Must match StartMCPCommand.PortEnvVar in rhino/plugin/StartMCPCommand.cs.
+    // Must match MCPSpawnCommand.PortEnvVar in rhino/plugin/MCPSpawnCommand.cs.
     private const string PortEnvVar = "RHINO_MCP_AUTOSTART_PORT";
 
     // Uses CreateProcess + CREATE_BREAKAWAY_FROM_JOB; see WinSpawn for the rationale.
@@ -454,7 +454,7 @@ public class RhinoManager(
     {
         return WinSpawn.Start(
             rhinoExe,
-            "/nosplash /runscript=\"_StartMCP\"",
+            "/nosplash /runscript=\"_MCPSpawn\"",
             new Dictionary<string, string> { [PortEnvVar] = port.ToString() });
     }
 
@@ -472,7 +472,7 @@ public class RhinoManager(
         psi.ArgumentList.Add(appPath);
         psi.ArgumentList.Add("--args");
         psi.ArgumentList.Add("-nosplash");
-        psi.ArgumentList.Add("-runscript=_StartMCP");
+        psi.ArgumentList.Add("-runscript=_MCPSpawn");
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start `open -a {appPath}`.");

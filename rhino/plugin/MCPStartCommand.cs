@@ -4,17 +4,17 @@ using Rhino.Input.Custom;
 
 namespace RhMcp;
 
-public class MCPCommand : Command
+public class MCPStartCommand : Command
 {
 
-    public override string EnglishName => "RhinoMCP";
+    public override string EnglishName => "MCPStart";
 
     protected override Result RunCommand(RhinoDoc doc, RunMode mode)
     {
         int port = RhinoMcpHost.GetNextPort();
 
         GetInteger go = new ();
-        go.SetCommandPrompt("RhinoMCP Port");
+        go.SetCommandPrompt("MCPStart Port");
         go.AcceptNothing(true);
         go.AcceptEnterWhenDone(true);
         go.SetDefaultInteger(port);

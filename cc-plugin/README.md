@@ -5,7 +5,7 @@ A minimal Claude Code plugin that wires the [Rhino MCP server](https://github.co
 ## Prerequisites
 
 1. Rhino is running.
-2. The `RhinoMCP` command has been run inside Rhino, and the server is listening on the default port `10500`. (If you changed the port, edit `.mcp.json`.)
+2. The `MCPStart` command has been run inside Rhino, and the server is listening on the default port `10500`. (If you changed the port, edit `.mcp.json`.)
 
 ## Install
 
