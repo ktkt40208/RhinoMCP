@@ -5,7 +5,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class ZoomToObjectTool
 {
-    [McpServerTool(Name = "zoom_to_object")]
+    [McpServerTool(Name = "zoom_to_object", Title = "Zoom To Object", ReadOnly = false, Destructive = false)]
     [Description("Zoom the active viewport to fit one or more objects by GUID.")]
     public static string ZoomToObject(
         RhinoDoc doc,

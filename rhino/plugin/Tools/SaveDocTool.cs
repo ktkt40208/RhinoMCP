@@ -5,7 +5,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class SaveDocTool
 {
-    [McpServerTool(Name = "save_doc")]
+    [McpServerTool(Name = "save_doc", Title = "Save Document", ReadOnly = false, Destructive = true)]
     [Description("Write the current document to the given .3dm path. Headless — no dialogs. Overwrites any existing file at the path.")]
     public static string SaveDoc(
         RhinoDoc doc,

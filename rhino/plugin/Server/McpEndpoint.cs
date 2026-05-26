@@ -163,6 +163,12 @@ internal sealed class McpDispatcher
                     Title = t.Title,
                     Description = t.Description,
                     InputSchema = t.InputSchema,
+                    Annotations = new ToolAnnotations
+                    {
+                        Title = t.Title,
+                        ReadOnlyHint = t.ReadOnly,
+                        DestructiveHint = t.Destructive,
+                    },
                 }).ToList(),
             },
         });

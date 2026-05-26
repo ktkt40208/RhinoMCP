@@ -13,7 +13,7 @@ public static class GH2_PlaceSliderTool
 {
     public record struct SliderInfo(Guid Id, double Min, double Value, double Max, int Decimals, float X, float Y);
 
-    [McpServerTool(Name = "g2_place_slider")]
+    [McpServerTool(Name = "g2_place_slider", Title = "Place GH2 Number Slider", ReadOnly = false, Destructive = false)]
     [Description("Place a Number Slider on the active GH2 canvas with the given range and current value.")]
     public static string Place(
         RhinoDoc rhDoc,

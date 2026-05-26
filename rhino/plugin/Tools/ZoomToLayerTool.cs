@@ -6,7 +6,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class ZoomToLayerTool
 {
-    [McpServerTool(Name = "zoom_to_layer")]
+    [McpServerTool(Name = "zoom_to_layer", Title = "Zoom To Layer", ReadOnly = false, Destructive = false)]
     [Description("Zoom the active viewport to fit all objects on a layer (full path).")]
     public static string ZoomToLayer(
         RhinoDoc doc,

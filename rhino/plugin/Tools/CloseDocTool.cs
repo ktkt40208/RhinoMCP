@@ -6,7 +6,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class CloseDocTool
 {
-    [McpServerTool(Name = "close_doc")]
+    [McpServerTool(Name = "close_doc", Title = "Close Document", ReadOnly = false, Destructive = true)]
     [Description("Close the current Rhino document. If path is given, save to that .3dm path first; otherwise discard unsaved changes.")]
     public static string CloseDoc(
         RhinoDoc doc,

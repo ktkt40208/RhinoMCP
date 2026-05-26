@@ -5,7 +5,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class RunCommandTool
 {
-    [McpServerTool(Name = "run_command")]
+    [McpServerTool(Name = "run_command", Title = "Run Rhino Command", ReadOnly = false, Destructive = true)]
     [Description("Execute any Rhino command string and return command window output. Example: \"_Box 0,0,0 10,10,10\"")]
     public static string RunCommand(
         RhinoDoc doc,

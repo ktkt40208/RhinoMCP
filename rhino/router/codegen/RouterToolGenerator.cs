@@ -99,6 +99,10 @@ public class RouterToolGenerator : IIncrementalGenerator
                 var toolName = ExtractStringArg(toolAttr, "Name");
                 if (toolName is null) continue;
 
+                var toolTitle = ExtractStringArg(toolAttr, "Title");
+                var readOnly = ExtractBoolArg(toolAttr, "ReadOnly") ?? false;
+                var destructive = ExtractBoolArg(toolAttr, "Destructive") ?? false;
+
                 var descAttr = FindAttribute(method.AttributeLists, "Description");
                 var description = descAttr is null ? "" : ExtractStringArg(descAttr) ?? "";
 
@@ -119,7 +123,9 @@ public class RouterToolGenerator : IIncrementalGenerator
                     parameters.Add(new ParameterInfo(paramName, routerType, paramDesc, defaultValue));
                 }
 
-                yield return new ToolInfo(className, toolName, description, parameters.ToImmutableArray());
+                yield return new ToolInfo(
+                    className, toolName, toolTitle, readOnly, destructive,
+                    description, parameters.ToImmutableArray());
             }
         }
     }
@@ -141,7 +147,13 @@ public class RouterToolGenerator : IIncrementalGenerator
         sb.AppendLine("[global::ModelContextProtocol.Server.McpServerToolType]");
         sb.AppendLine($"public class {className}(global::RhMcp.Router.ProxyDispatcher proxy)");
         sb.AppendLine("{");
-        sb.AppendLine($"    [global::ModelContextProtocol.Server.McpServerTool(Name = \"{tool.Name}\")]");
+        // Always emit ReadOnly + Destructive so every router proxy carries the
+        // hint annotations Anthropic's connector-submission policy requires.
+        sb.Append($"    [global::ModelContextProtocol.Server.McpServerTool(Name = \"{tool.Name}\"");
+        if (tool.Title is not null) sb.Append($", Title = \"{EscapeString(tool.Title)}\"");
+        sb.Append($", ReadOnly = {(tool.ReadOnly ? "true" : "false")}");
+        sb.Append($", Destructive = {(tool.Destructive ? "true" : "false")}");
+        sb.AppendLine(")]");
         sb.AppendLine($"    [global::System.ComponentModel.Description(\"{EscapeString(tool.Description)}\")]");
         sb.AppendLine($"    public global::System.Threading.Tasks.Task<string> InvokeAsync(");
 
@@ -292,8 +304,26 @@ public class RouterToolGenerator : IIncrementalGenerator
     private readonly record struct ToolInfo(
         string ClassName,
         string Name,
+        string? Title,
+        bool ReadOnly,
+        bool Destructive,
         string Description,
         ImmutableArray<ParameterInfo> Parameters);
+
+    private static bool? ExtractBoolArg(AttributeSyntax attr, string namedArg)
+    {
+        if (attr.ArgumentList is null) return null;
+        foreach (var arg in attr.ArgumentList.Arguments)
+        {
+            if (arg.NameEquals?.Name.Identifier.ValueText != namedArg) continue;
+            if (arg.Expression is LiteralExpressionSyntax lit)
+            {
+                if (lit.IsKind(SyntaxKind.TrueLiteralExpression)) return true;
+                if (lit.IsKind(SyntaxKind.FalseLiteralExpression)) return false;
+            }
+        }
+        return null;
+    }
 
     private readonly record struct ParameterInfo(
         string Name,

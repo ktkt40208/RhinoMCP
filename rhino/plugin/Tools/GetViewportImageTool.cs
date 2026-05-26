@@ -12,7 +12,7 @@ namespace RhMcp.Tools;
 public static class GetViewportImageTool
 {
 
-    [McpServerTool(Name = "get_viewport_image")]
+    [McpServerTool(Name = "get_viewport_image", Title = "Capture Viewport Image", ReadOnly = true, Destructive = false)]
     [Description("Capture the active Rhino viewport as JPG. Returns the image plus a JSON metadata block describing the resulting camera, display mode, framed scene bounds, and on-screen object count — use the metadata to diagnose empty/off-screen captures without re-shooting.")]
     public static IEnumerable<ContentBlock> GetViewportImage(
         RhinoDoc doc,

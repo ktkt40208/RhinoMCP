@@ -1,19 +1,24 @@
 {
-  "manifest_version": "0.2",
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
   "name": "rhino-mcp-platform",
   "display_name": "Rhino MCP Platform",
   "version": "0.1.0",
   "description": "Desktop Connector for Rhino3d and Grasshopper",
-  "long_description": "Bridges Claude to Rhino3d and Grasshopper. Requires the Rhino-MCP-Platform Rhino plugin to be installed via Rhino's PackageManager.",
+  "long_description": "An MCP bridge between Rhino3D, Grasshopper and Claude. You can use it as a modelling, scripting or plugin development assistant.\n\nRequires the Rhino-MCP-Platform plugin, installable from Rhino's PackageManager.",
   "author": {
     "name": "McNeel",
     "email": "callum@mcneel.com",
     "url": "https://github.com/mcneel/"
   },
-  "homepage": "http://www.mcneel.com",
+  "homepage": "https://www.mcneel.com",
   "documentation": "https://github.com/mcneel/RhinoMCP#readme",
   "support": "https://discourse.mcneel.com/c/rhino/artificial-intelligence-rhino/162",
-  "icon": "icon.png",
+  "icon": "icon-light.png",
+  "icons": [
+    { "src": "icon-light.png", "size": "512x512", "theme": "light" },
+    { "src": "icon-dark.png", "size": "512x512", "theme": "dark" }
+  ],
   "screenshots": [
     "screenshots/casa-rhino.png"
   ],
@@ -42,11 +47,12 @@
   "prompts": [
     {
       "name": "getting-started",
-      "description": "Useful for your first time trying the Rhino3D claude desktop connector",
-      "text": "TODO: Claude fill this in would ya?"
+      "description": "Walk through first-time setup of the Rhino 3D MCP connector.",
+      "text": "I'd like to try the Rhino 3D MCP connector for the first time. Help me confirm everything is wired up correctly: check that a Rhino slot is reachable, spawn one if not, then ask me what I'd like to build and create a simple example (e.g. a box) in Rhino so I can verify the connection end-to-end."
     }
   ],
   "compatibility": {
+    "claude_desktop": ">=1.0.0",
     "platforms": ["darwin", "win32"],
     "runtimes": {
       "node": ">=18.0.0"

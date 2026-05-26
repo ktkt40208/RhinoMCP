@@ -27,7 +27,7 @@ public static class GH2_ApplyGraphTool
         WireResult[] Wires,
         int WiresOk);
 
-    [McpServerTool(Name = "g2_apply_graph")]
+    [McpServerTool(Name = "g2_apply_graph", Title = "Apply GH2 Graph", ReadOnly = false, Destructive = false)]
     [Description("Place sliders + components and wire them in one call on the active GH2 canvas. References between objects use caller-supplied 'key' strings; the tool returns the key→Guid map. Failures in any step do not abort the rest; results report per-step status. Wire src/dst use the same selector semantics as 'g2_connect'.")]
     public static string Apply(
         RhinoDoc rhDoc,

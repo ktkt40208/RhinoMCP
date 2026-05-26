@@ -5,7 +5,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class ListObjectsTool
 {
-    [McpServerTool(Name = "list_objects")]
+    [McpServerTool(Name = "list_objects", Title = "List Document Objects", ReadOnly = true, Destructive = false)]
     [Description("List objects in the active document. Filter by name, layer, or geometry type. Pure query — does not change selection or viewport.")]
     public static string ListObjects(
         RhinoDoc doc,

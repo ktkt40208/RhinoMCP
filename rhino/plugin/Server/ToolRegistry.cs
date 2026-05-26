@@ -38,7 +38,10 @@ internal sealed class ToolRegistry
                 string? description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
                 bool marshalToUi = method.GetCustomAttribute<BackgroundThreadAttribute>() is null;
 
-                ToolHandler handler = new(method, name, toolAttr.Title, description, marshalToUi, services);
+                ToolHandler handler = new(
+                    method, name, toolAttr.Title, description,
+                    toolAttr.ReadOnly, toolAttr.Destructive,
+                    marshalToUi, services);
                 if (!registry._byName.TryAdd(name, handler))
                     throw new InvalidOperationException($"Duplicate MCP tool name: {name}");
             }
@@ -65,16 +68,21 @@ internal sealed class ToolHandler
     public string Name { get; }
     public string? Title { get; }
     public string? Description { get; }
+    public bool ReadOnly { get; }
+    public bool Destructive { get; }
     public JsonElement InputSchema { get; }
 
     public ToolHandler(
         MethodInfo method, string name, string? title, string? description,
+        bool readOnly, bool destructive,
         bool marshalToUi, IServiceProvider services)
     {
         _method = method;
         Name = name;
         Title = title;
         Description = description;
+        ReadOnly = readOnly;
+        Destructive = destructive;
         _marshalToUi = marshalToUi;
 
         _parameters = method.GetParameters()

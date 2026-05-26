@@ -94,6 +94,17 @@ internal sealed class ToolDescriptor
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
     public JsonElement InputSchema { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ToolAnnotations? Annotations { get; set; }
+}
+
+// Source - https://github.com/modelcontextprotocol/modelcontextprotocol/blob/0f786010cd27d2cb6a9f5df9b3ad0ce2c7236daa/schema/2025-06-18/schema.ts#L884
+internal sealed class ToolAnnotations
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; set; }
+    public bool ReadOnlyHint { get; set; }
+    public bool DestructiveHint { get; set; }
 }
 
 internal sealed class ListToolsResult

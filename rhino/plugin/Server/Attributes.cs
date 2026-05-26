@@ -13,6 +13,12 @@ public sealed class McpServerToolAttribute : Attribute
 {
     public string? Name { get; set; }
     public string? Title { get; set; }
+
+    // MCP tool annotations. Names match the SDK's McpServerToolAttribute
+    // properties so the router's source generator can pass these through to the
+    // SDK attribute on its proxy without translation.
+    public bool ReadOnly { get; set; }
+    public bool Destructive { get; set; }
 }
 
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
