@@ -4,6 +4,7 @@ linkTitle: Sketch to model
 weight: 4
 author: Callum
 editor: SteveF
+draft: true
 keywords:
   - sketch to model
   - image to geometry
