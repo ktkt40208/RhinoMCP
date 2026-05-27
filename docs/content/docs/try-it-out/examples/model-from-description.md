@@ -15,7 +15,7 @@ Describe what you want and let the assistant build it. Good for first drafts, st
 ## Try this prompt
 
 {{< prompt >}}
-Make a parametric park bench, 1.6m long, with five wooden slats. Cast-iron
+Make a park bench, 1.6m long, with five wooden slats. Cast-iron
 legs at each end. Put it on a layer called `Furniture` and apply
 appropriate materials.
 {{< /prompt >}}
