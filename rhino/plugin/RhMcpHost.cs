@@ -87,7 +87,7 @@ public static class RhinoMcpHost
     {
         try
         {
-            var dir = Path.Combine(Path.GetTempPath(), "rhino-mcp", "listeners");
+            var dir = ListenerDropDir();
             Directory.CreateDirectory(dir);
             var pid = Process.GetCurrentProcess().Id;
             var version = RhinoApp.Version.Major.ToString();
@@ -102,6 +102,17 @@ public static class RhinoMcpHost
         {
             RhinoApp.WriteLine($"[Rhino MCP] Failed to write listener announcement: {ex.Message}");
         }
+    }
+
+    // MUST match the router's RouterPaths.ListenersDir, or the router never sees
+    // our announcement. Fixed per-user dir, not GetTempPath() (drifts with $TMPDIR).
+    private static string ListenerDropDir()
+    {
+        string? overrideRoot = Environment.GetEnvironmentVariable("RHINO_MCP_HOME");
+        string root = string.IsNullOrEmpty(overrideRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "McNeel")
+            : overrideRoot;
+        return Path.Combine(root, "rhino-mcp", "listeners");
     }
 
     // Stop the listener bound to the given port and close its associated doc

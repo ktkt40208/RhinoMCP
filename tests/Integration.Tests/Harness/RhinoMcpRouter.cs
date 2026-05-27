@@ -35,6 +35,7 @@ public sealed class RhinoMcpRouter : IAsyncDisposable
             Name = "rhino-mcp-router (test)",
             Command = RhinoRouterPaths.ResolveBinary(),
             EnvironmentVariables = RhinoRouterPaths.IsolatedEnv(isolatedTempDir),
+            ShutdownTimeout = TimeSpan.FromMilliseconds(250),
         };
         StdioClientTransport transport = new(options);
 

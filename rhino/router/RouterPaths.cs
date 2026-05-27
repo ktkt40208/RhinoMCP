@@ -1,16 +1,27 @@
 namespace RhMcp.Router;
 
-// Single source of truth for on-disk paths the router shares with the plugin.
-// All router state lives under <temp>/rhino-mcp/: state.db (slot registry) and
-// listeners/*.json (plugin->router doorbell announcements). The plugin writes
-// into the listeners dir; the router consumes from it.
+// Shared on-disk paths the router and plugin both resolve: state.db + the
+// listeners/*.json announcement drop.
+// RhMcpHost.WriteAnnouncement mirrors this — keep them in lockstep or adoption breaks.
 public static class RouterPaths
 {
     public const string BaseDirName = "rhino-mcp";
     public const string ListenersDirName = "listeners";
     public const string StateDbName = "state.db";
+    public const string HomeOverrideEnvVar = "RHINO_MCP_HOME";
 
-    public static string BaseDir => Path.Combine(Path.GetTempPath(), BaseDirName);
+    public static string BaseDir
+    {
+        get
+        {
+            string? overrideRoot = Environment.GetEnvironmentVariable(HomeOverrideEnvVar);
+            string root = string.IsNullOrEmpty(overrideRoot)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "McNeel")
+                : overrideRoot;
+            return Path.Combine(root, BaseDirName);
+        }
+    }
+
     public static string ListenersDir => Path.Combine(BaseDir, ListenersDirName);
     public static string StateDbPath => Path.Combine(BaseDir, StateDbName);
 

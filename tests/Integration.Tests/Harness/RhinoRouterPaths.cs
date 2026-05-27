@@ -20,17 +20,11 @@ internal static class RhinoRouterPaths
         return path;
     }
 
-    // The router reads `Path.GetTempPath()` to decide where state.db and the
-    // listener-announcement dir live. Both POSIX and Windows honour an env-var
-    // override (TMPDIR / TEMP+TMP), so pointing those at a unique dir gives us
-    // a clean slot store and shields us from the user's live router.
+    // RHINO_MCP_HOME redirects the router+plugin shared dir to a unique location
+    // (see RouterPaths.BaseDir), isolating us from the user's live slot store.
     public static Dictionary<string, string?> IsolatedEnv(string tempDir)
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return new Dictionary<string, string?> { ["TEMP"] = tempDir, ["TMP"] = tempDir };
-        }
-        return new Dictionary<string, string?> { ["TMPDIR"] = tempDir };
+        return new Dictionary<string, string?> { ["RHINO_MCP_HOME"] = tempDir };
     }
 
     public static string CreateIsolatedTempDir()
