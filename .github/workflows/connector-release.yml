@@ -65,7 +65,7 @@ jobs:
       - name: Pack .mcpb bundle
         if: steps.check.outputs.exists == 'false'
         working-directory: connector
-        run: npx --yes @anthropic-ai/mcpb pack
+        run: node build.mjs
 
       - name: Create GitHub Release (creates tag atomically)
         if: steps.check.outputs.exists == 'false'

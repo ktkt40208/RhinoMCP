@@ -39,7 +39,7 @@ jobs:
 
       - name: Pack .mcpb bundle
         working-directory: connector
-        run: npx --yes @anthropic-ai/mcpb pack
+        run: node build.mjs
 
       - name: Inspect bundle
         working-directory: connector

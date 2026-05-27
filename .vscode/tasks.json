@@ -263,8 +263,8 @@
     {
       "label": "pack mcpb",
       "type": "shell",
-      "command": "mcpb",
-      "args": ["pack"],
+      "command": "node",
+      "args": ["build.mjs"],
       "options": {
         "cwd": "${workspaceFolder}/connector"
       },
