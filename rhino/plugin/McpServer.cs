@@ -46,7 +46,7 @@ internal sealed class McpServer : IDisposable
             var endpointOptions = new McpEndpointOptions
             {
                 ServerName = "rhino-mcp",
-                ServerVersion = "0.1.1",
+                ServerVersion = "0.1.2",
                 ToolAssembly = asm,
 #if DEBUG
                 SurfaceExceptionDetailsToClient = true,

@@ -32,7 +32,7 @@ public static class McpEndpointExtensions
 public sealed class McpEndpointOptions
 {
     public string ServerName { get; set; } = "rhino-mcp";
-    public string ServerVersion { get; set; } = "0.1.1";
+    public string ServerVersion { get; set; } = "0.1.2";
     public Assembly ToolAssembly { get; set; } = typeof(McpEndpointOptions).Assembly;
     public bool SurfaceExceptionDetailsToClient { get; set; }
 }

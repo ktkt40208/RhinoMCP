@@ -34,7 +34,7 @@ jsonOptions.TypeInfoResolverChain.Insert(0, RouterJsonContext.Default);
 var mcpBuilder = builder.Services
     .AddMcpServer(o =>
     {
-        o.ServerInfo = new() { Name = "rhino-mcp-router", Version = "0.1.1" };
+        o.ServerInfo = new() { Name = "rhino-mcp-router", Version = "0.1.2" };
     })
     .WithStdioServerTransport();
 

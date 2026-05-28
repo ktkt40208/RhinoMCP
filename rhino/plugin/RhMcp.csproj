@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Title>Rhino MCP Platform</Title>
     <Company>McNeel</Company>
     <Description>MCP server plugin for Rhino</Description>
