@@ -32,7 +32,6 @@ If anything goes sideways, [Troubleshooting](../troubleshooting) is your friend.
 ## Tips
 
 - **Be conversational.** You don't need to write perfect prompts. Ask, see the result, then say "make it taller" or "try it in red".
-- **Undo is your safety net.** Anything the assistant does in Rhino is just a regular Rhino edit. Hit Ctrl/Cmd+Z to walk it back.
 - **Chat fresh per project.** Start a new conversation when you switch tasks so the assistant doesn't get confused about which document you mean.
 
 <blockquote class="page-note">
