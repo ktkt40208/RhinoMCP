@@ -35,25 +35,29 @@ public static class RhinoMcpHost
 
     public static bool Start(RhinoDoc doc, int port)
     {
-        if (HasStarted(doc)) return true;
+        if (HasStarted(doc))
+            return true;
         McpServer server = new();
         Servers[doc.RuntimeSerialNumber] = server;
 
         var ok = server.Start(doc, port);
-        if (ok) WriteAnnouncement(port);
+        if (ok)
+            WriteAnnouncement(port);
         return ok;
     }
 
     public static void Stop(RhinoDoc doc)
     {
-        if (!Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server)) return;
+        if (!Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server))
+            return;
         Servers.Remove(doc.RuntimeSerialNumber);
         server?.Stop();
     }
 
     public static bool RestartOnPort(RhinoDoc doc, int port)
     {
-        if (port < 1 || port > 65535) return false;
+        if (port < 1 || port > 65535)
+            return false;
         // TODO : Check no other server is using the port and report to user
         Stop(doc);
         Start(doc, port);
@@ -62,22 +66,32 @@ public static class RhinoMcpHost
 
     // Shared dispatch for both the interactive `MCPStart` command and the
     // hidden `MCPSpawn` autostart path. Writes user-facing status lines.
-    public static bool StartOrRestart(RhinoDoc doc, int port)
+    public static bool StartOrRestart(RhinoDoc doc, int port, bool quiet = false)
     {
         if (HasStarted(doc))
         {
             if (!RestartOnPort(doc, port))
             {
-                RhinoApp.WriteLine($"[Rhino MCP] Failed to bind port {port}.");
+                if (!quiet)
+                {
+                    RhinoApp.WriteLine($"[Rhino MCP] Failed to bind port {port}.");
+                }
                 return false;
             }
-            RhinoApp.WriteLine($"[Rhino MCP] Restarted on http://localhost:{port}/");
+            if (!quiet)
+            {
+                RhinoApp.WriteLine($"[Rhino MCP] Restarted on http://localhost:{port}/");
+            }
             return true;
         }
 
-        if (Start(doc, port)) return true;
+        if (Start(doc, port))
+            return true;
 
-        RhinoApp.WriteLine($"[Rhino MCP] MCP server failed to start. Try a different port.");
+        if (!quiet)
+        {
+            RhinoApp.WriteLine($"[Rhino MCP] MCP server failed to start. Try a different port.");
+        }
         return false;
     }
 
@@ -98,7 +112,8 @@ public static class RhinoMcpHost
             var tmp = path + ".tmp";
             var json = JsonSerializer.Serialize(new { v = 1, pid, port, version });
             File.WriteAllText(tmp, json);
-            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path))
+                File.Delete(path);
             File.Move(tmp, path);
         }
         catch (Exception ex)
@@ -132,13 +147,15 @@ public static class RhinoMcpHost
     public static bool StopByPort(int port)
     {
         var entry = Servers.FirstOrDefault(kv => kv.Value.Port == port);
-        if (entry.Value is null) return false;
+        if (entry.Value is null)
+            return false;
         var docSerial = entry.Key;
         Servers.Remove(docSerial);
         entry.Value.Stop();
 
         var doc = RhinoDoc.FromRuntimeSerialNumber(docSerial);
-        if (doc is null) return true;
+        if (doc is null)
+            return true;
 
         var tempPath = Path.Combine(
             Path.GetTempPath(),
@@ -166,7 +183,9 @@ public static class RhinoMcpHost
         _ = Task.Run(async () =>
         {
             await Task.Delay(1000).ConfigureAwait(false);
-            try { File.Delete(tempPath); } catch { /* OS temp sweep will get it */ }
+            try
+            { File.Delete(tempPath); }
+            catch { /* OS temp sweep will get it */ }
         });
 
         return true;
