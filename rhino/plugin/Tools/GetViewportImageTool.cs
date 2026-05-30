@@ -12,7 +12,7 @@ namespace RhMcp.Tools;
 public static class GetViewportImageTool
 {
 
-    [McpServerTool(Name = "get_viewport_image", Title = "Capture Viewport Image", ReadOnly = true, Destructive = false)]
+    [McpServerTool("get_viewport_image", "Capture Viewport Image", true, false)]
     [Description("Capture the active Rhino viewport as JPG. Returns the image plus a JSON metadata block describing the resulting camera, display mode, framed scene bounds, and on-screen object count — use the metadata to diagnose empty/off-screen captures without re-shooting.")]
     public static IEnumerable<ContentBlock> GetViewportImage(
         RhinoDoc doc,
@@ -26,6 +26,11 @@ public static class GetViewportImageTool
         [Description("Frame this bounding box (max corner). Pair with boxMin.")] Vector3d? boxMax = null,
         [Description("Magnification factor: >1 zoom in, 0<x<1 zoom out. Applied after boxMin/boxMax if both supplied.")] double? zoom = null)
     {
+        if (doc.IsHeadless)
+        {
+            return [ContentBlock.CreateText(SerializeResult(null, $"Cannot capture view in headless doc"))];
+        }
+
         width = Math.Min(width, 1280);
         height = Math.Min(height, 720);
 

@@ -1,7 +1,3 @@
-using System.Collections.Generic;
-using System.IO;
-using System.Reflection;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,32 +18,23 @@ namespace RhMcp.Server;
 public static class McpEndpointExtensions
 {
     public static IEndpointConventionBuilder MapMcp(
-        this IEndpointRouteBuilder endpoints, string pattern, McpEndpointOptions options)
+        this IEndpointRouteBuilder endpoints, string pattern)
     {
-        McpDispatcher dispatcher = new(options, endpoints.ServiceProvider);
+        McpDispatcher dispatcher = new(endpoints.ServiceProvider);
         return endpoints.MapPost(pattern, dispatcher.HandleAsync);
     }
 }
 
-public sealed class McpEndpointOptions
-{
-    public string ServerName { get; set; } = "rhino-mcp";
-    public string ServerVersion { get; set; } = "0.1.3";
-    public Assembly ToolAssembly { get; set; } = typeof(McpEndpointOptions).Assembly;
-    public bool SurfaceExceptionDetailsToClient { get; set; }
-}
-
 internal sealed class McpDispatcher
 {
-    private readonly McpEndpointOptions _options;
+    
     private readonly ToolRegistry _tools;
     private readonly ResourceRegistry _resources;
 
-    public McpDispatcher(McpEndpointOptions options, IServiceProvider rootServices)
+    public McpDispatcher(IServiceProvider rootServices)
     {
-        _options = options;
-        _tools = ToolRegistry.Scan(options.ToolAssembly, rootServices);
-        _resources = ResourceRegistry.Scan(options.ToolAssembly, rootServices);
+        _tools = ToolRegistry.Scan(typeof(McpDispatcher).Assembly, rootServices);
+        _resources = ResourceRegistry.Scan(typeof(McpDispatcher).Assembly, rootServices);
     }
 
     public async Task HandleAsync(HttpContext ctx)
@@ -108,9 +95,11 @@ internal sealed class McpDispatcher
                 Error = new JsonRpcError
                 {
                     Code = JsonRpcErrorCode.InternalError,
-                    Message = _options.SurfaceExceptionDetailsToClient
-                        ? $"{ex.GetType().FullName}: {ex.Message}"
-                        : "Internal error.",
+#if DEBUG
+                    Message = $"{ex.GetType().FullName}: {ex.Message}"
+#else
+                    "Internal error."
+#endif
                 }
             }).ConfigureAwait(false);
         }
@@ -136,7 +125,7 @@ internal sealed class McpDispatcher
         {
             Result = new InitializeResult
             {
-                ServerInfo = new ServerInfo { Name = _options.ServerName, Version = _options.ServerVersion },
+                ServerInfo = new ServerInfo { Name = "rhino-mcp", Version = typeof(McpDispatcher).Assembly.GetName().Version?.ToString() ?? "0.0.0" },
                 Capabilities = new ServerCapabilities
                 {
                     Tools = new ToolsCapability(),
@@ -258,9 +247,11 @@ internal sealed class McpDispatcher
     }
 
     private string FormatToolError(Exception ex) =>
-        _options.SurfaceExceptionDetailsToClient
-            ? $"{ex.GetType().FullName}: {ex.Message}\n{ex.StackTrace}"
-            : $"{ex.GetType().Name}: {ex.Message}";
+#if DEBUG
+            $"{ex.GetType().FullName}: {ex.Message}\n{ex.StackTrace}";
+#else
+            $"{ex.GetType().Name}: {ex.Message}";
+#endif
 
     private async Task<JsonRpcResponse> HandleResourceReadAsync(
         JsonRpcRequest request, IServiceProvider services, CancellationToken ct)

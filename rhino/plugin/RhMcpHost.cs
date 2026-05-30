@@ -27,7 +27,7 @@ public static class RhinoMcpHost
     public static int GetNextPort()
     {
         int nextPort = DefaultPort;
-        if (Servers.Any())
+        if (Servers.Count > 0)
         {
             nextPort = Servers.Max(s => s.Value.Port) + 1;
         }

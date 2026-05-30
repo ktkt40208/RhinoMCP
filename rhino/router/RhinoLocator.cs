@@ -4,9 +4,9 @@ namespace RhMcp.Router;
 
 // Resolves a full path to Rhino.exe (Windows) or the Rhinoceros binary (macOS)
 // for a given version string. Versions: "8" | "9" | "WIP".
-public class RhinoLocator
+public static class RhinoLocator
 {
-    public string ResolveRhinoExe(string version)
+    public static string ResolveRhinoExe(string version)
     {
         if (TryResolve(version, out string path))
             return path;
@@ -16,69 +16,61 @@ public class RhinoLocator
             $"Installed versions found: {string.Join(", ", ListInstalledVersions())}");
     }
 
-    private bool TryResolve(string version, out string path)
+    private static bool TryResolve(string version, out string path)
     {
         path = string.Empty;
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // Rhino 9 currently ships only as WIP, so "9" falls back to the
-            // WIP install dir when no released Rhino 9 is present. Once a
-            // real Rhino 9 ships, the first lookup will hit and the fallback
-            // becomes dead code we can drop.
-            // TODO: also try registry-based lookup if Program Files paths miss.
-            string[] dirs = version switch
+            IEnumerable<string> directories = Directory.EnumerateDirectories(@$"C:\Program Files\", "Rhino*");
+            foreach(string dir in directories)
             {
-                "8" => new[] { @"C:\Program Files\Rhino 8" },
-                "9" => new[] { @"C:\Program Files\Rhino 9", @"C:\Program Files\Rhino 9 WIP" },
-                "WIP" => new[] { @"C:\Program Files\Rhino 9 WIP" },
-                _ => Array.Empty<string>()
-            };
-            foreach (string dir in dirs)
-            {
-                string candidate = Path.Combine(dir, "System", "Rhino.exe");
-                if (File.Exists(candidate))
+                if (!dir.Contains(version, StringComparison.OrdinalIgnoreCase))
                 {
+                    string candidate = Path.Combine(dir, "System", "Rhino.exe");
+                    // It's unlikely, but not impossible!
+                    if (!File.Exists(candidate)) continue;
                     path = candidate;
                     return true;
                 }
             }
+
+            if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
+            {
+                path = @$"C:\Program Files\Rhino 9 WIP\Sysem\Rhino.exe";
+                return Directory.Exists(path);
+            }
+
             return false;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            // See Windows branch — "9" falls back to RhinoWIP.app while Rhino 9
-            // is still shipping as WIP.
-            string[] appNames = version switch
+            IEnumerable<string> directories = Directory.EnumerateDirectories(@$"/Applications/", "Rhino*");
+            foreach(string rhinoDir in directories)
             {
-                "8" => new[] { "Rhino 8.app" },
-                "9" => new[] { "Rhino 9.app", "RhinoWIP.app" },
-                "WIP" => new[] { "RhinoWIP.app" },
-                _ => Array.Empty<string>()
-            };
-            // Without this guard an unknown version resolves to "/Applications/",
-            // which Directory.Exists trivially confirms — spawn then attempts
-            // `open -a /Applications/` and we burn the full startup timeout
-            // before reporting failure. Fail fast with rhino_not_installed instead.
-            foreach (string appName in appNames)
-            {
-                string candidate = $"/Applications/{appName}";
-                if (Directory.Exists(candidate))
+                if (rhinoDir.Contains(version, StringComparison.OrdinalIgnoreCase))
                 {
-                    path = candidate;
+                    path = rhinoDir;
                     return true;
                 }
             }
+
+            if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
+            {
+                path = $"/Applications/RhinoWIP.app";
+                return Directory.Exists(path);
+            }
+
             return false;
         }
 
         return false;
     }
 
-    public IEnumerable<string> ListInstalledVersions()
+    public static IEnumerable<string> ListInstalledVersions()
     {
-        foreach (string v in new[] { "8", "9", "WIP" })
+        foreach (string v in new[] { "8", "9", "10", "11", "12", "WIP" })
         {
             if (TryResolve(v, out _))
                 yield return v;

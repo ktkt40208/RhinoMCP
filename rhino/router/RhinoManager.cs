@@ -17,7 +17,6 @@ namespace RhMcp.Router;
 //          and ask the existing listener to spawn another doc+listener via
 //          _router_spawn_listener. Leader election happens in SlotStore.Reserve.
 public class RhinoManager(
-    RhinoLocator locator,
     RouterConfig config,
     RhinoControlClient control,
     SlotStore store,
@@ -98,7 +97,7 @@ public class RhinoManager(
     {
         try
         {
-            var rhinoExe = locator.ResolveRhinoExe(version);
+            var rhinoExe = RhinoLocator.ResolveRhinoExe(version);
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
@@ -334,25 +333,25 @@ public class RhinoManager(
     // one-shot doorbell — always deleted, success or not.
     public void ScanAnnouncements()
     {
-        var dir = RouterPaths.ListenersDir;
-        if (!Directory.Exists(dir)) return;
+        if (!Directory.Exists(RouterPaths.ListenersDir)) return;
 
         string[] files;
-        try { files = Directory.GetFiles(dir, "*.json"); }
+        try { files = Directory.GetFiles(RouterPaths.ListenersDir, "*.json"); }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "Failed to enumerate listener-announcement dir {Dir}", dir);
+            log.LogWarning(ex, "Failed to enumerate listener-announcement dir {Dir}", RouterPaths.ListenersDir);
             return;
         }
+        if (files.Length <= 0) return;
 
-        foreach (var file in files)
+        foreach (string file in files)
         {
             try
             {
                 Announcement? ann;
                 try
                 {
-                    var json = File.ReadAllText(file);
+                    string json = File.ReadAllText(file);
                     ann = JsonSerializer.Deserialize(json, RouterJsonContext.Default.Announcement);
                 }
                 catch (Exception ex)
@@ -532,8 +531,8 @@ public class RhinoManager(
     {
         try
         {
-            using var client = new TcpClient();
-            var task = client.ConnectAsync("127.0.0.1", port);
+            using TcpClient client = new ();
+            Task task = client.ConnectAsync("127.0.0.1", port);
             return task.Wait(200) && client.Connected;
         }
         catch
@@ -558,7 +557,7 @@ public record ChildRhino(
     int Pid,
     string Version,
     bool Adopted = false,
-    [property: JsonIgnore] string Status = SlotStatus.Ready)
+    [property: JsonIgnore] SlotStatus Status = SlotStatus.Ready)
 {
     public string Endpoint => $"http://localhost:{Port}";
 }

@@ -26,7 +26,7 @@ public static class GH1_ApplyGraphTool
         WireResult[] Wires,
         int WiresOk);
 
-    [McpServerTool(Name = "g1_apply_graph", Title = "Apply GH1 Graph", ReadOnly = false, Destructive = false)]
+    [McpServerTool("g1_apply_graph", "Apply GH1 Graph", false, false)]
     [Description("Place sliders + components and wire them in one call. References between objects use caller-supplied 'key' strings; the tool returns the key→Guid map. Failures in any step do not abort the rest; results report per-step status. Wire src/dst use the same selector semantics as 'g1_connect'.")]
     public static string Apply(
         RhinoDoc rhDoc,

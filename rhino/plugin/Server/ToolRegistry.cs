@@ -1,6 +1,5 @@
-using System.ComponentModel;
 using System.Reflection;
-using System.Text.Json;
+
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,27 +11,31 @@ namespace RhMcp.Server;
 // to marshal the invocation onto the Rhino UI thread.
 internal sealed class ToolRegistry
 {
-    private readonly Dictionary<string, ToolHandler> _byName = new(StringComparer.Ordinal);
 
-    public IReadOnlyCollection<ToolHandler> All => _byName.Values;
+    private Dictionary<string, ToolHandler> ByName { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public IReadOnlyCollection<ToolHandler> All => ByName.Values;
 
     public bool TryGet(string name, out ToolHandler handler) =>
-        _byName.TryGetValue(name, out handler!);
+        ByName.TryGetValue(name, out handler!);
 
     public static ToolRegistry Scan(Assembly assembly, IServiceProvider services)
     {
         ToolRegistry registry = new();
         foreach (Type type in SafeGetTypes(assembly))
         {
-            if (type.GetCustomAttribute<McpServerToolTypeAttribute>() is null) continue;
+            if (type.GetCustomAttribute<McpServerToolTypeAttribute>() is null)
+                continue;
 
             const BindingFlags flags =
                 BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance |
                 BindingFlags.DeclaredOnly;
+
             foreach (MethodInfo method in type.GetMethods(flags))
             {
                 McpServerToolAttribute? toolAttr = method.GetCustomAttribute<McpServerToolAttribute>();
-                if (toolAttr is null) continue;
+                if (toolAttr is null)
+                    continue;
 
                 string name = toolAttr.Name ?? method.Name;
                 string? description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
@@ -42,7 +45,8 @@ internal sealed class ToolRegistry
                     method, name, toolAttr.Title, description,
                     toolAttr.ReadOnly, toolAttr.Destructive,
                     marshalToUi, services);
-                if (!registry._byName.TryAdd(name, handler))
+
+                if (!registry.ByName.TryAdd(name, handler))
                     throw new InvalidOperationException($"Duplicate MCP tool name: {name}");
             }
         }
@@ -51,7 +55,8 @@ internal sealed class ToolRegistry
 
     private static IEnumerable<Type> SafeGetTypes(Assembly asm)
     {
-        try { return asm.GetTypes(); }
+        try
+        { return asm.GetTypes(); }
         catch (ReflectionTypeLoadException ex)
         {
             return ex.Types.Where(t => t is not null)!;
@@ -114,7 +119,8 @@ internal sealed class ToolHandler
     public Task<CallToolResult> InvokeAsync(
         IDictionary<string, JsonElement>? arguments, IServiceProvider scope, CancellationToken ct)
     {
-        if (!_marshalToUi) return InvokeCoreAsync(arguments, scope, ct);
+        if (!_marshalToUi)
+            return InvokeCoreAsync(arguments, scope, ct);
 
         // Default policy: marshal every tool to the Rhino UI thread. macOS's
         // AppKit aborts the process if any UI/document API is touched off the
@@ -123,7 +129,8 @@ internal sealed class ToolHandler
         TaskCompletionSource<CallToolResult> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         RhinoApp.InvokeOnUiThread(new Action(async () =>
         {
-            try { tcs.SetResult(await InvokeCoreAsync(arguments, scope, ct).ConfigureAwait(false)); }
+            try
+            { tcs.SetResult(await InvokeCoreAsync(arguments, scope, ct).ConfigureAwait(false)); }
             catch (Exception ex) { tcs.SetException(ex); }
         }), null);
         return tcs.Task;

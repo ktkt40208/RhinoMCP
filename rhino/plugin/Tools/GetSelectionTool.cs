@@ -3,7 +3,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class GetSelectionTool
 {
-    [McpServerTool(Name = "get_selection", Title = "Get Selection", ReadOnly = true, Destructive = false)]
+    [McpServerTool("get_selection", "Get Selection", true, false)]
     [Description("Return all currently selected objects in Rhino.")]
     public static string GetSelection(RhinoDoc doc)
     {

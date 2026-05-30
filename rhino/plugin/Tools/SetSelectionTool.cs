@@ -5,7 +5,7 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class SetSelectionTool
 {
-    [McpServerTool(Name = "set_selection", Title = "Set Selection", ReadOnly = false, Destructive = false)]
+    [McpServerTool("set_selection", "Set Selection", false, false)]
     [Description("Select objects by filter (IDs, names, layer, geometry type). Clears existing selection.")]
     public static string SetSelection(
         RhinoDoc doc,

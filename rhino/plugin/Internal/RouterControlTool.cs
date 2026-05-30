@@ -9,7 +9,7 @@ namespace RhMcp.Internal;
 [McpServerToolType]
 public static class RouterControlTool
 {
-    [McpServerTool(Name = "_router_spawn_listener")]
+    [McpServerTool("_router_spawn_listener")]
     [Description("Router-internal: create a new RhinoDoc and start an MCP listener bound to it. Returns { port }.")]
     public static string SpawnListener()
     {
@@ -21,7 +21,7 @@ public static class RouterControlTool
         {
             try
             {
-                var seen = RhinoDoc.OpenDocuments()
+                HashSet<uint> seen = RhinoDoc.OpenDocuments()
                     .Select(d => d.RuntimeSerialNumber)
                     .ToHashSet();
 
@@ -60,7 +60,7 @@ public static class RouterControlTool
         return JsonSerializer.Serialize(new { port });
     }
 
-    [McpServerTool(Name = "_router_close_listener")]
+    [McpServerTool("_router_close_listener")]
     [Description("Router-internal: stop the MCP listener on the given port and close its associated doc without saving.")]
     public static string CloseListener(int port)
     {
@@ -73,7 +73,7 @@ public static class RouterControlTool
     // the router waiting for a process exit that never happens. Clear Modified
     // on every doc first, then fire _Exit on a delayed background task so this
     // HTTP response can unwind before Rhino starts tearing itself down.
-    [McpServerTool(Name = "_router_quit_app")]
+    [McpServerTool("_router_quit_app")]
     [Description("Router-internal: schedule a graceful Rhino exit via _Exit. Returns immediately; the actual quit fires shortly after on the UI thread.")]
     public static string QuitApp()
     {
