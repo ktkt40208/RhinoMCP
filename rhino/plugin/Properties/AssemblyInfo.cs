@@ -1,7 +1,4 @@
-﻿using System.Reflection;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using Rhino.PlugIns;
+﻿using System.Runtime.InteropServices;
 
 // Plug-in Description Attributes - all of these are optional.
 // These will show in Rhino's option dialog, in the tab Plug-ins.
