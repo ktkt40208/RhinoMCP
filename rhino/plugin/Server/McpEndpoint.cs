@@ -98,7 +98,7 @@ internal sealed class McpDispatcher
 #if DEBUG
                     Message = $"{ex.GetType().FullName}: {ex.Message}"
 #else
-                    "Internal error."
+                    Message = "Internal error."
 #endif
                 }
             }).ConfigureAwait(false);

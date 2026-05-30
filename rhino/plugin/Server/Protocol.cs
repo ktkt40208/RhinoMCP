@@ -163,9 +163,12 @@ public sealed class ContentBlock
 internal sealed class ResourceDescriptor
 {
     public string Uri { get; set; } = "";
+
     public string Name { get; set; } = "";
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MimeType { get; set; }
 }
@@ -173,9 +176,12 @@ internal sealed class ResourceDescriptor
 internal sealed class ResourceTemplateDescriptor
 {
     public string UriTemplate { get; set; } = "";
+    
     public string Name { get; set; } = "";
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Description { get; set; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MimeType { get; set; }
 }
