@@ -252,9 +252,13 @@ function runPlaceholderMcp({ mode, serverName, tool, onCall }) {
 
   const rl = createInterface({ input: process.stdin });
   rl.on("line", line => {
+    if (line.trim() === "") return;
     let req;
-    try { req = JSON.parse(line); } catch { return; }
+    try { req = JSON.parse(line); } catch { error(null, -32700, "Parse error"); return; }
     const { id, method, params } = req;
+    // A request without an id is a notification — JSON-RPC 2.0 forbids any
+    // reply, including errors. (id: null is discouraged; treat it the same.)
+    if (id === undefined || id === null) return;
     if (method === "initialize") {
       reply(id, {
         protocolVersion: params?.protocolVersion ?? "2024-11-05",
@@ -269,7 +273,7 @@ function runPlaceholderMcp({ mode, serverName, tool, onCall }) {
         return;
       }
       reply(id, onCall());
-    } else if (id !== undefined) {
+    } else {
       error(id, -32601, `method not supported in ${mode}: ${method}`);
     }
   });
