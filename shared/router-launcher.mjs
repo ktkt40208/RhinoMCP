@@ -12,19 +12,21 @@ import { homedir, constants as osConstants } from "node:os";
 import { createInterface } from "node:readline";
 
 function resolveRid() {
-  if (process.platform === "darwin") return "osx-arm64";
-  if (process.platform === "win32") return process.arch === "arm64" ? "win-arm64" : "win-x64";
-  return null;
+  const rid = {
+    "darwin": "osx-arm64",
+    "win32": process.arch === "arm64" ? "win-arm64" : "win-x64",
+  };
+
+  return rid[process.platform] ?? null;
 }
 
 function packagesRoot() {
-  if (process.platform === "darwin") {
-    return join(homedir(), "Library", "Application Support", "McNeel", "Rhinoceros", "packages");
-  }
-  if (process.platform === "win32") {
-    return process.env.APPDATA ? join(process.env.APPDATA, "McNeel", "Rhinoceros", "packages") : null;
-  }
-  return null;
+  const root = {
+    "darwin": join(homedir(), "Library", "Application Support", "McNeel", "Rhinoceros", "packages"),
+    "win32": process.env.APPDATA ? join(process.env.APPDATA, "McNeel", "Rhinoceros", "packages") : null,
+  };
+
+  return root[process.platform] ?? null;
 }
 
 function isDir(p) { try { return statSync(p).isDirectory(); } catch { return false; } }
@@ -46,7 +48,7 @@ function findRouter() {
   const byVersionDesc = (a, b) => b.localeCompare(a, undefined, { numeric: true });
 
   const considered = [];
-  for (const ver of ["9.0", "8.0"]) {
+  for (const ver of ["10.0", "9.0", "8.0"]) {
     const base = join(root, ver, "Rhino-MCP-Platform");
     if (!isDir(base)) continue;
     for (const pkgver of listDirs(base).sort(byVersionDesc)) {
