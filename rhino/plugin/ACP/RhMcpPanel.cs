@@ -270,9 +270,121 @@ public class RhMcpPanel : Panel
             running = !turn.Completed;
         }
 
+        if (convo.TryGetPendingQuestion(out PendingQuestion question))
+            TranscriptStack.Items.Add(QuestionCard(question));
+
         SyncSendButton(running);
         ScrollToBottom();
     }
+
+    // Inline ask_user affordance rendered at the bottom of the transcript. Click handlers run on
+    // the UI thread and only touch managed state + the thread-safe PendingQuestion TCS — no Rhino
+    // modal Get APIs — so the question is safe to answer mid-command. First channel to complete
+    // the TCS wins; the other (command line) call returns false and is ignored.
+    private Control QuestionCard(PendingQuestion question)
+    {
+        StackLayout body = new() { Spacing = 6, Padding = new Padding(8, 6) };
+        body.Items.Add(new Label { Text = $"ask_user: {question.Question}", Font = SystemFonts.Bold() });
+
+        if (question.Task.IsCompleted)
+        {
+            body.Items.Add(new Label
+            {
+                Text = "answered",
+                TextColor = SystemColors.DisabledText,
+                Font = SystemFonts.Default(8),
+            });
+            return Card(body);
+        }
+
+        TextBox otherText = new() { PlaceholderText = "Other…" };
+
+        if (question.Mode == AskUserMode.Multi)
+        {
+            List<CheckBox> checks = [];
+            foreach (string option in question.Options)
+            {
+                CheckBox box = new() { Text = option };
+                checks.Add(box);
+                body.Items.Add(box);
+            }
+            body.Items.Add(otherText);
+
+            Button submit = new() { Text = "Submit" };
+            submit.Click += (_, _) =>
+            {
+                List<string> selected = [];
+                for (int i = 0; i < checks.Count; i++)
+                    if (checks[i].Checked == true)
+                        selected.Add(question.Options[i]);
+                string other = otherText.Text?.Trim() ?? string.Empty;
+                if (other.Length > 0)
+                    selected.Add(other);
+                CompleteFromPanel(question, selected);
+            };
+            body.Items.Add(ButtonRow(question, submit));
+            return Card(body);
+        }
+
+        RadioButton controller = new() { Text = question.Options.Count > 0 ? question.Options[0] : "Other" };
+        List<RadioButton> radios = [];
+        for (int i = 0; i < question.Options.Count; i++)
+        {
+            RadioButton radio = i == 0 ? controller : new RadioButton(controller) { Text = question.Options[i] };
+            radios.Add(radio);
+            body.Items.Add(radio);
+        }
+        RadioButton otherRadio = question.Options.Count == 0 ? controller : new RadioButton(controller) { Text = "Other" };
+        if (question.Options.Count != 0)
+            body.Items.Add(otherRadio);
+        body.Items.Add(otherText);
+
+        Button submitSingle = new() { Text = "Submit" };
+        submitSingle.Click += (_, _) =>
+        {
+            for (int i = 0; i < radios.Count; i++)
+            {
+                if (radios[i].Checked)
+                {
+                    CompleteFromPanel(question, [question.Options[i]]);
+                    return;
+                }
+            }
+            string other = otherText.Text?.Trim() ?? string.Empty;
+            CompleteFromPanel(question, other.Length > 0 ? [other] : []);
+        };
+        body.Items.Add(ButtonRow(question, submitSingle));
+        return Card(body);
+    }
+
+    private Control ButtonRow(PendingQuestion question, Button submit)
+    {
+        Button cancel = new() { Text = "Cancel" };
+        cancel.Click += (_, _) =>
+        {
+            question.TryCancel();
+            Rerender();
+        };
+        return new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items = { submit, cancel },
+        };
+    }
+
+    private void CompleteFromPanel(PendingQuestion question, IReadOnlyList<string> selected)
+    {
+        question.TryComplete(AskUserAnswer.Of(selected));
+        Rerender();   // defensive immediate dismissal; the tool's finally also clears the card
+    }
+
+    private static Control Card(Control content) => new Panel
+    {
+        Padding = new Padding(2),
+        BackgroundColor = SystemColors.ControlBackground,
+        Content = content,
+    };
 
     private void AppendTurnEvents(Turn turn)
     {
