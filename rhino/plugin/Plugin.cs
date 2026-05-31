@@ -5,17 +5,20 @@ namespace RhMcp;
 public class RhMcpPlugin : PlugIn
 {
 
+    private CommandInterceptorHost? CommandInterceptors { get; set; }
+
     protected override LoadReturnCode OnLoad(ref string errorMessage)
     {
         RhinoDoc.BeginOpenDocument += Register;
-        CommandInterceptor.Attach();
+        CommandInterceptors = new CommandInterceptorHost();
+        Rhino.UI.Panels.RegisterPanel(this, typeof(RhMcpPanel), "Rhino MCP", null);
         return base.OnLoad(ref errorMessage);
     }
 
     protected override void OnShutdown()
     {
-        CommandInterceptor.Detach();
-        AcpAgent.DisposeShared();
+        CommandInterceptors?.Dispose();
+        AgentHost.Shutdown();
     }
 
     private void Register(object? sender, DocumentOpenEventArgs e)

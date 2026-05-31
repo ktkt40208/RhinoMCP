@@ -15,17 +15,14 @@ namespace RhMcp;
 //   * auto-approves every permission request
 //   * advertises no fs/terminal capabilities, so the agent never calls back for them
 //   * no concurrency guard: a second prompt while one is running is sent as-is
-internal sealed class AcpAgent : IDisposable
+internal sealed class ClaudeNpxAgent : IAgent
 {
     // npm package that exposes Claude Code over ACP. Overridable for dev / Windows
     // (where `npx` isn't directly CreateProcess-able and needs a full path or cmd).
     const string DefaultCommand = "npx";
     const string DefaultPackage = "@agentclientprotocol/claude-agent-acp";
 
-    static AcpAgent? _instance;
-    public static AcpAgent Instance => _instance ??= new AcpAgent();
-
-    public static void DisposeShared() => Interlocked.Exchange(ref _instance, null)?.Dispose();
+    public string Name => "acp";
 
     Process? Proc { get; set; }
     StreamWriter? Stdin { get; set; }
@@ -280,6 +277,8 @@ internal sealed class AcpAgent : IDisposable
         Proc = null;
         Stdin = null;
     }
+
+    public void Cancel() => Kill();
 
     public void Dispose() => Kill();
 }

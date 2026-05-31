@@ -56,7 +56,6 @@ internal enum JsonRpcErrorCode
 
 // ----- MCP-level types --------------------------------------------------------
 
-// TODO : I think this _could_ be anonymous types
 internal sealed class InitializeResult
 {
     [JsonInclude]
