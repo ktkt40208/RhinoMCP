@@ -1,19 +1,17 @@
-using System.IO;
-using System.Threading.Tasks;
 using Rhino.Commands;
 using Rhino.Input.Custom;
 
 namespace RhMcp;
 
-// Shared flow for the per-agent commands (Claude, Cursor, Gemini, Codex). Abstract so Rhino's
-// command discovery skips it and only instantiates the concrete subclasses below.
+// Shared flow for the per-agent commands (Claude, Codex). Abstract so Rhino's command discovery
+// skips it and only instantiates the concrete subclasses below. Each command sets its adapter as
+// the doc's active agent, then funnels the prompt through AgentDispatch.
 public abstract class AgentCommand : Command
 {
     protected override string CommandContextHelpUrl => "https://mcneel.github.io/RhinoMCP";
 
-    // The agent this command drives; a fresh instance, deduplicated per document by AgentHost.
-    // private protected keeps it within IAgent's internal accessibility.
-    private protected abstract IAgent CreateAgent();
+    // The agent name this command targets; SetActive before dispatch so the named command is meaningful.
+    private protected abstract string AgentName { get; }
 
     protected override Result RunCommand(RhinoDoc doc, RunMode mode)
     {
@@ -25,28 +23,8 @@ public abstract class AgentCommand : Command
         string request = get.StringResult();
         if (string.IsNullOrWhiteSpace(request)) return Result.Cancel;
 
-        IAgent agent = AgentHost.For(doc, CreateAgent);
-
-        // The agent needs an MCP listener as its hands; auto-start one for this doc if absent.
-        if (!RhinoMcpHost.TryGetPortFor(doc, out int port))
-        {
-            RhinoMcpHost.StartOrRestart(doc, RhinoMcpHost.GetNextPort());
-            if (!RhinoMcpHost.TryGetPortFor(doc, out port))
-            {
-                RhinoApp.WriteLine($"[{agent.Name}] could not start an MCP server for this document.");
-                return Result.Failure;
-            }
-        }
-
-        string url = $"http://localhost:{port}/";
-        string cwd = !string.IsNullOrEmpty(doc.Path)
-            ? Path.GetDirectoryName(doc.Path) ?? Path.GetTempPath()
-            : Path.GetTempPath();
-
-        _ = agent.PromptAsync(request, url, cwd).ContinueWith(
-            t => RhinoApp.WriteLine($"[{agent.Name}] error: {t.Exception?.GetBaseException().Message}"),
-            TaskContinuationOptions.OnlyOnFaulted);
-
+        AgentHost.SetActive(doc, AgentName);
+        AgentDispatch.PromptActive(doc, UserMessage.FromText(request));
         return Result.Success;
     }
 }

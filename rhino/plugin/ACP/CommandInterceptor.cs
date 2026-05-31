@@ -1,6 +1,3 @@
-using System.IO;
-using System.Threading.Tasks;
-
 namespace RhMcp;
 
 /// <summary>
@@ -102,24 +99,6 @@ internal sealed class CommandInterceptor : IDisposable
                 return;
         }
 
-        // The agent needs an MCP listener as its hands; auto-start one for this doc if absent.
-        if (!RhinoMcpHost.TryGetPortFor(Doc, out int port))
-        {
-            RhinoMcpHost.StartOrRestart(Doc, RhinoMcpHost.GetNextPort());
-            if (!RhinoMcpHost.TryGetPortFor(Doc, out port))
-            {
-                RhinoApp.WriteLine($"{RoutedMarker} could not start an MCP server for this document.");
-                return;
-            }
-        }
-
-        string url = $"http://localhost:{port}/";
-        string cwd = !string.IsNullOrEmpty(Doc.Path)
-            ? Path.GetDirectoryName(Doc.Path) ?? Path.GetTempPath()
-            : Path.GetTempPath();
-
-        _ = AgentHost.For(Doc).PromptAsync(request, url, cwd).ContinueWith(
-            t => RhinoApp.WriteLine($"{RoutedMarker} error: {t.Exception?.GetBaseException().Message}"),
-            TaskContinuationOptions.OnlyOnFaulted);
+        AgentDispatch.PromptActive(Doc, UserMessage.FromText(request));
     }
 }

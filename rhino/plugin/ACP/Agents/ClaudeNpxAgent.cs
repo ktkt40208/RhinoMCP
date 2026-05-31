@@ -34,14 +34,14 @@ internal sealed class ClaudeNpxAgent : IAgent
     SemaphoreSlim WriteGate { get; } = new(1, 1);
     Task? StartTask { get; set; }
 
-    public async Task PromptAsync(string text, string mcpUrl, string cwd)
+    public async Task PromptAsync(UserMessage message, string mcpUrl, string cwd)
     {
         await EnsureStartedAsync(mcpUrl, cwd).ConfigureAwait(false);
         string sid = SessionId ?? throw new InvalidOperationException("ACP session not established.");
         await RequestAsync("session/prompt", new
         {
             sessionId = sid,
-            prompt = new object[] { new { type = "text", text } },
+            prompt = new object[] { new { type = "text", text = message.Text } },
         }).ConfigureAwait(false);
     }
 

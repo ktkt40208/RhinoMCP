@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -12,7 +13,9 @@ namespace RhMcp;
 // stream is parsed.
 internal abstract class CliAgent : IAgent
 {
-    public abstract string Name { get; }
+    protected AgentDefinition Definition { get; }
+
+    public string Name => Definition.Name;
 
     Process? Proc { get; set; }
     StreamWriter? Stdin { get; set; }
@@ -32,16 +35,25 @@ internal abstract class CliAgent : IAgent
     // for a future panel/export; not yet surfaced on IAgent.
     internal Conversation Conversation { get; }
 
-    protected CliAgent() => Conversation = new Conversation(SessionId);
-
-    // The executable's leaf name, probed across the known install dirs (see TryResolveCommand).
-    protected abstract string CommandFileName { get; }
+    protected CliAgent(AgentDefinition def)
+    {
+        Definition = def;
+        Conversation = new Conversation(SessionId);
+    }
 
     // Thrown when the CLI isn't installed; should point the user at the installer.
     protected abstract string NotFoundMessage { get; }
 
     // Append the CLI's launch args (and any --resume vs fresh-session flag, keyed off Started).
     protected abstract void ConfigureArguments(ProcessStartInfo psi, string mcpUrl);
+
+    // Adapters call this after their own flags so custom entries can inject extra args.
+    // Built-ins set ExtraArgs=[] so this emits nothing and the launch is unchanged.
+    protected void AppendExtraArgs(ProcessStartInfo psi)
+    {
+        foreach (string arg in Definition.ExtraArgs)
+            psi.ArgumentList.Add(arg);
+    }
 
     // The built-in AskUserQuestion needs an interactive frontend we don't have in headless
     // stdio mode, so it auto-cancels; steer every agent to the Rhino MCP tool that renders on
@@ -52,7 +64,7 @@ internal abstract class CliAgent : IAgent
         + "tool — it cannot be displayed in this environment and will be cancelled.";
 
     // The single stdin line that carries one user turn (a JSON envelope or plain text).
-    protected abstract string FormatUserMessage(string text);
+    protected abstract string FormatUserMessage(UserMessage message);
 
     // Parse one stdout line; call CompleteTurn(proc) when the turn's terminal event arrives.
     protected abstract void Handle(string line, Process proc);
@@ -90,7 +102,7 @@ internal abstract class CliAgent : IAgent
     [Conditional("DEBUG")]
     protected void DebugLog(string message) => RhinoApp.WriteLine($"[{Name}:debug] {message}");
 
-    public async Task PromptAsync(string request, string mcpUrl, string cwd)
+    public async Task PromptAsync(UserMessage message, string mcpUrl, string cwd)
     {
         await EnsureStartedAsync(mcpUrl, cwd).ConfigureAwait(false);
 
@@ -100,9 +112,9 @@ internal abstract class CliAgent : IAgent
             TaskCompletionSource<bool> turn = new(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (Gate)
                 CurrentTurn = turn;
-            Conversation.BeginTurn(request);
+            Conversation.BeginTurn(message.Text);
 
-            await SendUserMessageAsync(request).ConfigureAwait(false);
+            await SendUserMessageAsync(message).ConfigureAwait(false);
             await turn.Task.ConfigureAwait(false);   // completes when the reader sees this turn's terminal event
         }
         finally
@@ -177,10 +189,10 @@ internal abstract class CliAgent : IAgent
         return Task.CompletedTask;
     }
 
-    async Task SendUserMessageAsync(string text)
+    async Task SendUserMessageAsync(UserMessage message)
     {
         StreamWriter writer = Stdin ?? throw new InvalidOperationException($"{Name} agent not started.");
-        string line = FormatUserMessage(text);
+        string line = FormatUserMessage(message);
         DebugLog($">> {line}");
 
         await WriteGate.WaitAsync().ConfigureAwait(false);
@@ -251,19 +263,12 @@ internal abstract class CliAgent : IAgent
     }
 
     // Rhino launched from Finder/Dock often has a minimal PATH without Homebrew or the
-    // native installer dir, so we probe the known locations rather than relying on PATH.
+    // native installer dir, so we probe the definition's locations rather than relying on PATH.
+    // Last match wins (later candidates override earlier ones), preserving the original ordering.
     bool TryResolveCommand(out string path)
     {
         path = string.Empty;
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string[] candidates =
-        {
-            Path.Combine(home, ".local", "bin", CommandFileName),
-            $"/opt/homebrew/bin/{CommandFileName}",
-            $"/usr/local/bin/{CommandFileName}",
-        };
-
-        foreach (string candidate in candidates)
+        foreach (string candidate in Definition.SearchPaths)
         {
             if (!File.Exists(candidate)) continue;
             path = candidate;

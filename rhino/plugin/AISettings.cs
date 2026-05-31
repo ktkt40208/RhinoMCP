@@ -1,16 +1,86 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using Rhino.PlugIns;
 
 namespace RhMcp;
 
 internal static class AISettings
 {
-    
+
     private static Guid PluginId { get; } = new("2668d7ed-f507-4a68-8295-8172147a0e39");
 
     private static PersistentSettings Settings =>
         PlugIn.Find(PluginId) is PlugIn plugin
             ? plugin.Settings
             : throw new InvalidOperationException("RhMcp plugin is not loaded; AISettings is unavailable.");
+
+    // Name of the agent the registry prefers when resolving the active one.
+    public static string DefaultAgentName
+    {
+        get => Settings.GetString(nameof(DefaultAgentName), "claude");
+        set => Settings.SetString(nameof(DefaultAgentName), value);
+    }
+
+    // Tools hidden from in-Rhino agents (Part 3). Empty = nothing hidden.
+    public static string[] DisabledTools
+    {
+        get => Settings.GetStringList(nameof(DisabledTools), []);
+        set => Settings.SetStringList(nameof(DisabledTools), value);
+    }
+
+    // External MCP servers merged into each agent's own config beside `rhino` (Part 4).
+    public static string ExtraMcpServersJson
+    {
+        get => Settings.GetString(nameof(ExtraMcpServersJson), "{\"mcpServers\":{}}");
+        set => Settings.SetString(nameof(ExtraMcpServersJson), value);
+    }
+
+    // Per-session conversation history lives under its own child node (Part 6).
+    public static PersistentSettings Conversations =>
+        Settings.TryGetChild(nameof(Conversations), out PersistentSettings child)
+            ? child
+            : Settings.AddChild(nameof(Conversations));
+
+    // The full agent chain: built-ins (always present, Claude-first) overlaid with any custom
+    // entries, in chain order. Custom entries that alias a built-in name override the built-in
+    // in place; never duplicated. Built-ins are re-seeded on every read so they can't be lost.
+    public static IReadOnlyList<AgentDefinition> GetAgents()
+    {
+        List<AgentDefinition> chain = AgentRegistry.Builtins().ToList();
+        foreach (AgentDefinition custom in DeserializeAgents())
+        {
+            int existing = chain.FindIndex(a => a.Name == custom.Name);
+            if (existing >= 0)
+                chain[existing] = custom with { IsBuiltin = chain[existing].IsBuiltin };
+            else
+                chain.Add(custom);
+        }
+        return chain;
+    }
+
+    // Persists the chain. Built-ins are not stored verbatim (they re-seed on read); we store
+    // every entry's settable state so a built-in override (e.g. edited search paths) survives.
+    public static void SetAgents(IReadOnlyList<AgentDefinition> agents) =>
+        Settings.SetString(AgentsKey, JsonSerializer.Serialize(agents, McpSerializer.Options));
+
+    private const string AgentsKey = "Agents";
+
+    private static IReadOnlyList<AgentDefinition> DeserializeAgents()
+    {
+        string json = Settings.GetString(AgentsKey, string.Empty);
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+        try
+        {
+            AgentDefinition[]? parsed = JsonSerializer.Deserialize<AgentDefinition[]>(json, McpSerializer.Options);
+            return parsed ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     public static int StartingPort
     {

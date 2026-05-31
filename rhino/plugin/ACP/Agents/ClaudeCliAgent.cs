@@ -5,9 +5,7 @@ namespace RhMcp;
 // CliAgent over Claude Code's stream-json stdio mode.
 internal sealed class ClaudeCliAgent : CliAgent
 {
-    public override string Name => "claude";
-
-    protected override string CommandFileName => "claude";
+    public ClaudeCliAgent(AgentDefinition def) : base(def) { }
 
     protected override string NotFoundMessage =>
         "Claude CLI not found. Install Claude Code (claude.ai/install).";
@@ -41,13 +39,22 @@ internal sealed class ClaudeCliAgent : CliAgent
         psi.ArgumentList.Add("--disable-slash-commands");
         psi.ArgumentList.Add(Started ? "--resume" : "--session-id");
         psi.ArgumentList.Add(SessionId.ToString());
+
+        // Built-in defaults set Model="" / ExtraArgs=[], so these append nothing and the
+        // launch is byte-identical to before; custom entries layer their model/args on top.
+        if (Definition.Model.Length > 0)
+        {
+            psi.ArgumentList.Add("--model");
+            psi.ArgumentList.Add(Definition.Model);
+        }
+        AppendExtraArgs(psi);
     }
 
-    protected override string FormatUserMessage(string text) =>
+    protected override string FormatUserMessage(UserMessage message) =>
         JsonSerializer.Serialize(new
         {
             type = "user",
-            message = new { role = "user", content = new object[] { new { type = "text", text } } },
+            message = new { role = "user", content = new object[] { new { type = "text", text = message.Text } } },
         }, McpSerializer.Options);
 
     protected override void Handle(string line, Process proc)

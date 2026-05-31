@@ -4,5 +4,5 @@ public sealed class CodexCommand : AgentCommand
 {
     public override string EnglishName => "Codex";
 
-    private protected override IAgent CreateAgent() => new CodexCliAgent();
+    private protected override string AgentName => "codex";
 }

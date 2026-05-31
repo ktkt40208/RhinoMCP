@@ -1,10 +1,16 @@
+using System.Collections.Generic;
+using System.Linq;
+
 namespace RhMcp;
 
 internal static class AgentHost
 {
     // Keyed by (document serial, agent name) so each doc can drive one agent per kind
-    // (Claude, Cursor, ...) at once without them colliding on a single slot.
+    // (Claude, Codex, ...) at once without them colliding on a single slot.
     private static Dictionary<(uint Doc, string Name), IAgent> Agents { get; } = new();
+
+    // The active agent name per document. Absent => fall back to the configured default.
+    private static Dictionary<uint, string> ActiveNames { get; } = new();
 
     static AgentHost()
     {
@@ -16,8 +22,31 @@ internal static class AgentHost
         DisposeDoc(e.DocumentSerialNumber);
     }
 
-    // The command-line interceptor routes to the Claude agent by default.
-    public static IAgent For(RhinoDoc doc) => For(doc, static () => new ClaudeCliAgent());
+    public static void SetActive(RhinoDoc doc, string name) =>
+        ActiveNames[doc.RuntimeSerialNumber] = name;
+
+    // The active agent for the doc, resolved via the registry and pooled per (doc, name).
+    // Returns false (rather than null) when discovery finds nothing usable, so callers can
+    // surface a friendly message instead of faulting.
+    public static bool TryFor(RhinoDoc doc, out IAgent agent)
+    {
+        if (!TryResolveActiveDefinition(doc, out AgentDefinition def))
+        {
+            agent = default!;
+            return false;
+        }
+        agent = For(doc, () => AgentFactory.Create(def));
+        return true;
+    }
+
+    private static bool TryResolveActiveDefinition(RhinoDoc doc, out AgentDefinition def)
+    {
+        if (ActiveNames.TryGetValue(doc.RuntimeSerialNumber, out string? active) &&
+            AgentRegistry.TryGet(active, out def))
+            return true;
+
+        return AgentRegistry.TryResolveActive(out def);
+    }
 
     public static IAgent For(RhinoDoc doc, Func<IAgent> factory)
     {
@@ -45,6 +74,7 @@ internal static class AgentHost
         foreach (IAgent agent in Agents.Values.ToArray())
             SafeDispose(agent);
         Agents.Clear();
+        ActiveNames.Clear();
     }
 
     private static void DisposeDoc(uint serial)
@@ -54,6 +84,7 @@ internal static class AgentHost
             if (Agents.Remove(key, out IAgent? agent))
                 SafeDispose(agent);
         }
+        ActiveNames.Remove(serial);
     }
 
     private static void SafeDispose(IAgent agent)

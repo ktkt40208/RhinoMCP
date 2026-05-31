@@ -6,9 +6,7 @@ namespace RhMcp;
 // (the {"msg":{"type":...}} envelope) instead of Claude's stream-json shape.
 internal sealed class CodexCliAgent : CliAgent
 {
-    public override string Name => "codex";
-
-    protected override string CommandFileName => "codex";
+    public CodexCliAgent(AgentDefinition def) : base(def) { }
 
     protected override string NotFoundMessage =>
         "Codex CLI not found. Install Codex (npm i -g @openai/codex).";
@@ -27,10 +25,19 @@ internal sealed class CodexCliAgent : CliAgent
         // Resume the same conversation across respawns rather than starting over.
         psi.ArgumentList.Add(Started ? "--resume" : "--session-id");  // verify: Codex resume flag names
         psi.ArgumentList.Add(SessionId.ToString());
+
+        // Built-in defaults set Model="" / ExtraArgs=[], so these append nothing; custom
+        // entries layer their model/args on top. // verify: Codex -c model override key shape
+        if (Definition.Model.Length > 0)
+        {
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"model=\"{Definition.Model}\"");
+        }
+        AppendExtraArgs(psi);
     }
 
     // Codex `exec -` consumes a plain-text prompt from stdin (no JSON envelope).
-    protected override string FormatUserMessage(string text) => text;
+    protected override string FormatUserMessage(UserMessage message) => message.Text;
 
     // Codex frames each event as a top-level object carrying a `msg` payload whose `type`
     // names the event (e.g. session_configured, agent_message, mcp_tool_call, task_complete).

@@ -16,6 +16,10 @@ public class RhMcpPlugin : PlugIn
         RhinoDoc.BeginOpenDocument += Register;
         CommandInterceptors = new CommandInterceptorHost();
 
+        // Probe agent install paths once on load so the active agent resolves before the first
+        // prompt; Part 1's settings dialog re-runs this when the agent config changes.
+        AgentRegistry.Refresh();
+
         Rhino.UI.Panels.RegisterPanel(this, typeof(RhMcpPanel), "AI", LoadPanelIcon(), Rhino.UI.PanelType.PerDoc);
         return base.OnLoad(ref errorMessage);
     }
