@@ -27,7 +27,7 @@ internal static class AgentDispatch
             }
         }
 
-        string url = $"http://localhost:{port}/";
+        string url = $"http://localhost:{port}/agent";
         string cwd = !string.IsNullOrEmpty(doc.Path)
             ? Path.GetDirectoryName(doc.Path) ?? Path.GetTempPath()
             : Path.GetTempPath();

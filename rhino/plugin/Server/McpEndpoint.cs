@@ -18,9 +18,9 @@ namespace RhMcp.Server;
 public static class McpEndpointExtensions
 {
     public static IEndpointConventionBuilder MapMcp(
-        this IEndpointRouteBuilder endpoints, string pattern)
+        this IEndpointRouteBuilder endpoints, string pattern, bool filtered = false)
     {
-        McpDispatcher dispatcher = new(endpoints.ServiceProvider);
+        McpDispatcher dispatcher = new(endpoints.ServiceProvider, filtered);
         return endpoints.MapPost(pattern, dispatcher.HandleAsync);
     }
 }
@@ -31,10 +31,13 @@ internal sealed class McpDispatcher
     private readonly ToolRegistry _tools;
     private readonly ResourceRegistry _resources;
 
-    public McpDispatcher(IServiceProvider rootServices)
+    private bool Filtered { get; }
+
+    public McpDispatcher(IServiceProvider rootServices, bool filtered)
     {
         _tools = ToolRegistry.Scan(typeof(McpDispatcher).Assembly, rootServices);
         _resources = ResourceRegistry.Scan(typeof(McpDispatcher).Assembly, rootServices);
+        Filtered = filtered;
     }
 
     public async Task HandleAsync(HttpContext ctx)
@@ -141,12 +144,16 @@ internal sealed class McpDispatcher
     private static Task<JsonRpcResponse> HandlePing() =>
         Task.FromResult(new JsonRpcResponse { Result = new { } });
 
-    private Task<JsonRpcResponse> HandleToolsList() =>
-        Task.FromResult(new JsonRpcResponse
+    private Task<JsonRpcResponse> HandleToolsList()
+    {
+        HashSet<string> disabled = Filtered
+            ? new HashSet<string>(RhMcp.AISettings.DisabledTools, StringComparer.OrdinalIgnoreCase)
+            : [];
+        return Task.FromResult(new JsonRpcResponse
         {
             Result = new ListToolsResult
             {
-                Tools = _tools.All.Select(t => new ToolDescriptor
+                Tools = _tools.All.Where(t => !disabled.Contains(t.Name)).Select(t => new ToolDescriptor
                 {
                     Name = t.Name,
                     Title = t.Title,
@@ -161,6 +168,7 @@ internal sealed class McpDispatcher
                 }).ToList(),
             },
         });
+    }
 
     private Task<JsonRpcResponse> HandleResourcesList() =>
         Task.FromResult(new JsonRpcResponse
@@ -222,6 +230,16 @@ internal sealed class McpDispatcher
                 {
                     Code = JsonRpcErrorCode.MethodNotFound,
                     Message = $"Tool '{p.Name}' is not registered.",
+                }
+            };
+
+        if (Filtered && RhMcp.AISettings.DisabledTools.Contains(p.Name, StringComparer.OrdinalIgnoreCase))
+            return new JsonRpcResponse
+            {
+                Error = new JsonRpcError
+                {
+                    Code = JsonRpcErrorCode.MethodNotFound,
+                    Message = $"Tool '{p.Name}' is not available.",
                 }
             };
 
