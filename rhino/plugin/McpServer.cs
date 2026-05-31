@@ -44,10 +44,11 @@ internal sealed class McpServer : IDisposable
 
             App = builder.Build();
             App.MapMcp("/");
+            App.MapMcp("/agent", filtered: true);
 
             _ = App.RunAsync(Cts.Token);
 
-            RhinoApp.WriteLine($"[Rhino MCP] MCP server currently running on http://localhost:{port}/");
+            RhinoApp.WriteLine($"[Rhino MCP] MCP server currently running on http://localhost:{port}/ (in-Rhino agents use /agent)");
             return true;
         }
         catch (Exception ex)
