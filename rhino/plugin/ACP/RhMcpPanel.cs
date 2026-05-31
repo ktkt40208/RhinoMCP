@@ -38,6 +38,10 @@ public class RhMcpPanel : Panel
     private Conversation? Subscribed { get; set; }
     private Action? SubscribedHandler { get; set; }
 
+    // Suppresses OnAgentPicked while the dropdown is repopulated programmatically, so only a
+    // genuine user pick drives SetActive/Resubscribe/Rerender.
+    private bool Populating { get; set; }
+
     public RhMcpPanel()
         : this(Rhino.RhinoDoc.ActiveDoc is { } doc ? doc.RuntimeSerialNumber : 0u)
     {
@@ -103,8 +107,24 @@ public class RhMcpPanel : Panel
                 new TableRow(promptRow),
             },
         };
+    }
 
-        LoadComplete += (_, _) => Reload();
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        Reload();
+    }
+
+    // The Conversation is owned by the pooled CliAgent in AgentHost and outlives this panel, so
+    // its off-thread Changed event would otherwise keep firing into a disposed panel (AppKit abort
+    // / leak). Detach on unload; Loaded then gates any Rerender already queued via InvokeOnUiThread.
+    protected override void OnUnLoad(EventArgs e)
+    {
+        if (Subscribed is not null && SubscribedHandler is not null)
+            Subscribed.Changed -= SubscribedHandler;
+        Subscribed = null;
+        SubscribedHandler = null;
+        base.OnUnLoad(e);
     }
 
     private bool TryDoc(out RhinoDoc doc)
@@ -123,18 +143,31 @@ public class RhMcpPanel : Panel
 
     private void PopulateAgents()
     {
-        AgentPicker.Items.Clear();
-        IReadOnlyList<ResolvedAgent> chain = AgentRegistry.Chain;
-        foreach (ResolvedAgent r in chain)
+        Populating = true;
+        try
         {
-            string label = r.Available ? r.Definition.Name : $"{r.Definition.Name} (not found)";
-            AgentPicker.Items.Add(new ListItem { Text = label, Key = r.Definition.Name });
-        }
+            AgentPicker.Items.Clear();
+            IReadOnlyList<ResolvedAgent> chain = AgentRegistry.Chain;
+            foreach (ResolvedAgent r in chain)
+            {
+                string label = r.Available ? r.Definition.Name : $"{r.Definition.Name} (not found)";
+                AgentPicker.Items.Add(new ListItem { Text = label, Key = r.Definition.Name });
+            }
 
-        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent active))
-            AgentPicker.SelectedKey = active.Name;
-        else if (AgentPicker.Items.Count > 0)
-            AgentPicker.SelectedIndex = 0;
+            // Reflect the resolved active agent without pinning: only a genuine user pick should
+            // pin via AgentHost.SetActive, so the registry's first-Enabled-and-Available fallback
+            // stays authoritative as availability changes.
+            if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent active))
+                AgentPicker.SelectedKey = active.Name;
+            else if (chain.FirstOrDefault(static r => r.Available) is { } available)
+                AgentPicker.SelectedKey = available.Definition.Name;
+            else if (AgentPicker.Items.Count > 0)
+                AgentPicker.SelectedIndex = 0;
+        }
+        finally
+        {
+            Populating = false;
+        }
 
         UpdateModelLabel();
     }
@@ -158,6 +191,9 @@ public class RhMcpPanel : Panel
 
     private void OnAgentPicked(object? sender, EventArgs e)
     {
+        if (Populating)
+            return;
+
         string? name = AgentPicker.SelectedKey;
         if (string.IsNullOrEmpty(name) || !TryDoc(out RhinoDoc doc))
             return;
@@ -201,6 +237,11 @@ public class RhMcpPanel : Panel
 
     private void Rerender()
     {
+        // A Rerender queued onto the UI thread can land after the panel is unloaded; mutating
+        // detached Eto controls risks an AppKit abort / ObjectDisposedException.
+        if (!Loaded)
+            return;
+
         TranscriptStack.Items.Clear();
 
         bool anyAgent = AgentRegistry.Chain.Any(static r => r.Available);
@@ -367,11 +408,13 @@ public class RhMcpPanel : Panel
         SendButton.ToolTip = running ? "Cancel the current turn" : "Send (Enter)";
     }
 
-    private void ScrollToBottom()
+    // Eto layout is deferred, so TranscriptStack's size is stale right after a rebuild; defer the
+    // scroll until after layout settles so streaming actually reaches the true bottom.
+    private void ScrollToBottom() => Application.Instance.AsyncInvoke(() =>
     {
-        Size content = TranscriptStack.Size;
-        TranscriptScroll.ScrollPosition = new Point(0, content.Height);
-    }
+        if (Loaded)
+            TranscriptScroll.ScrollPosition = new Point(0, TranscriptStack.Height);
+    });
 
     private void OnPromptKeyDown(object? sender, KeyEventArgs e)
     {
@@ -413,13 +456,17 @@ public class RhMcpPanel : Panel
         if (!TryDoc(out RhinoDoc doc))
             return;
 
-        UserMessage message = new(text, Pending.ToArray());
-
         // Resolve/subscribe before dispatch: the first prompt builds the agent, and we want the
-        // Changed hook attached before its reader loop starts writing.
-        AgentHost.TryFor(doc, out IAgent _);
+        // Changed hook attached before its reader loop starts writing. Gate on availability so a
+        // no-op dispatch doesn't silently discard the user's typed prompt + attachments.
+        if (!AgentHost.TryFor(doc, out IAgent _))
+        {
+            RhinoApp.WriteLine("[rhmcp] No AI agent available; open AI Settings to configure one.");
+            return;
+        }
         Resubscribe();
 
+        UserMessage message = new(text, Pending.ToArray());
         AgentDispatch.PromptActive(doc, message);
 
         PromptBox.Text = string.Empty;
