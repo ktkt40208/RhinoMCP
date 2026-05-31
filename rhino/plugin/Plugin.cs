@@ -8,7 +8,13 @@ public class RhMcpPlugin : PlugIn
     protected override LoadReturnCode OnLoad(ref string errorMessage)
     {
         RhinoDoc.BeginOpenDocument += Register;
+        CommandInterceptor.Attach();
         return base.OnLoad(ref errorMessage);
+    }
+
+    protected override void OnShutdown()
+    {
+        CommandInterceptor.Detach();
     }
 
     private void Register(object? sender, DocumentOpenEventArgs e)
