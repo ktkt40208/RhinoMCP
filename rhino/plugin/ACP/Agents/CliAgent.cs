@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -62,6 +63,52 @@ internal abstract class CliAgent : IAgent
         "To ask the user a question or have them choose between options, always call the "
         + $"mcp__{RouterMcpConfig.ServerName}__ask_user tool. Never use the built-in AskUserQuestion "
         + "tool — it cannot be displayed in this environment and will be cancelled.";
+
+    // The full system prompt sent at launch: the always-on AskUserSteer plus this agent's own
+    // SystemPrompt. AskUserSteer is never dropped, so the steering survives custom prompts.
+    protected string ComposedSystemPrompt =>
+        Definition.SystemPrompt.Length > 0
+            ? AskUserSteer + "\n\n" + Definition.SystemPrompt
+            : AskUserSteer;
+
+    // Fail-soft parse of AISettings.ExtraMcpServersJson down to its inner `mcpServers` object,
+    // detached (DeepClone) so callers can reparent the children into their own config. Runs inside
+    // ConfigureArguments during spawn, so a bad textarea or unloaded plugin must never throw — it
+    // returns false and the launch proceeds with only the built-in rhino server.
+    protected bool TryGetExtraMcpServers(out JsonObject servers)
+    {
+        servers = new JsonObject();
+        string json;
+        try
+        {
+            json = AISettings.ExtraMcpServersJson;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject root ||
+                root["mcpServers"] is not JsonObject inner)
+                return false;
+
+            foreach (KeyValuePair<string, JsonNode?> entry in inner)
+            {
+                if (entry.Value is JsonNode node)
+                    servers[entry.Key] = node.DeepClone();
+            }
+            return servers.Count > 0;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
 
     // The single stdin line that carries one user turn (a JSON envelope or plain text).
     protected abstract string FormatUserMessage(UserMessage message);

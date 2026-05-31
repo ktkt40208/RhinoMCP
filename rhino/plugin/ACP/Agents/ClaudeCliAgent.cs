@@ -1,4 +1,7 @@
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text;
+using System.Text.Json.Nodes;
 
 namespace RhMcp;
 
@@ -15,13 +18,24 @@ internal sealed class ClaudeCliAgent : CliAgent
         // Same {"mcpServers":{...}} shape Claude Code expects; this is the agent's hands.
         // We connect straight to this doc's HTTP listener — not via the router — so the
         // agent always operates on the exact doc the command was run in.
-        string mcpConfig = $$"""
+        JsonObject servers = new()
+        {
+            ["rhino"] = new JsonObject { ["type"] = "http", ["url"] = mcpUrl },
+        };
+
+        // External servers from settings are merged beside rhino, but rhino is never
+        // overwritten — those tools are the agent's hands on this exact doc.
+        if (TryGetExtraMcpServers(out JsonObject extra))
+        {
+            foreach (KeyValuePair<string, JsonNode?> entry in extra)
             {
-              "mcpServers": {
-                "rhino": { "type": "http", "url": "{{mcpUrl}}" }
-              }
+                if (entry.Key == "rhino" || entry.Value is not JsonNode node)
+                    continue;
+                servers[entry.Key] = node.DeepClone();
             }
-            """;
+        }
+
+        string mcpConfig = new JsonObject { ["mcpServers"] = servers }.ToJsonString(McpSerializer.Options);
 
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--input-format");
@@ -35,7 +49,7 @@ internal sealed class ClaudeCliAgent : CliAgent
         psi.ArgumentList.Add("--allowedTools");
         psi.ArgumentList.Add("mcp__rhino*");
         psi.ArgumentList.Add("--append-system-prompt");
-        psi.ArgumentList.Add(AskUserSteer);
+        psi.ArgumentList.Add(ComposedSystemPrompt);
         psi.ArgumentList.Add("--disable-slash-commands");
         psi.ArgumentList.Add(Started ? "--resume" : "--session-id");
         psi.ArgumentList.Add(SessionId.ToString());
@@ -50,12 +64,44 @@ internal sealed class ClaudeCliAgent : CliAgent
         AppendExtraArgs(psi);
     }
 
-    protected override string FormatUserMessage(UserMessage message) =>
-        JsonSerializer.Serialize(new
+    protected override string FormatUserMessage(UserMessage message)
+    {
+        // The agent has no filesystem access, so every attachment is delivered inline. Images use
+        // Claude's content-block image shape ({type:image, source:{type:base64, media_type, data}});
+        // text files are inlined as fenced text blocks naming the file.
+        List<object> content = [];
+        if (message.Text.Length > 0)
+            content.Add(new { type = "text", text = message.Text });
+
+        foreach (Attachment attachment in message.Attachments)
+        {
+            content.Add(attachment.Kind switch
+            {
+                AttachmentKind.Image => new
+                {
+                    type = "image",
+                    source = new
+                    {
+                        type = "base64",
+                        media_type = attachment.MediaType,
+                        data = Convert.ToBase64String(attachment.Data),
+                    },
+                },
+                AttachmentKind.TextFile => (object)new
+                {
+                    type = "text",
+                    text = $"```{attachment.Name}\n{Encoding.UTF8.GetString(attachment.Data)}\n```",
+                },
+                _ => new { type = "text", text = string.Empty },
+            });
+        }
+
+        return JsonSerializer.Serialize(new
         {
             type = "user",
-            message = new { role = "user", content = new object[] { new { type = "text", text = message.Text } } },
+            message = new { role = "user", content },
         }, McpSerializer.Options);
+    }
 
     protected override void Handle(string line, Process proc)
     {
