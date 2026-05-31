@@ -9,7 +9,7 @@ namespace RhMcp;
 // (the {"msg":{"type":...}} envelope) instead of Claude's stream-json shape.
 internal sealed class CodexCliAgent : CliAgent
 {
-    public CodexCliAgent(AgentDefinition def) : base(def) { }
+    public CodexCliAgent(AgentDefinition def, string docTitle) : base(def, docTitle) { }
 
     protected override string NotFoundMessage =>
         "Codex CLI not found. Install Codex (npm i -g @openai/codex).";

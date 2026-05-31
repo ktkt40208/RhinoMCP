@@ -54,9 +54,18 @@ internal sealed class Conversation
     private List<TurnEvent> LifecycleList { get; } = new();
     private Turn? Current { get; set; }
 
-    public Conversation(Guid sessionId) => SessionId = sessionId;
+    public Conversation(Guid sessionId, string agentName, string docTitle)
+    {
+        SessionId = sessionId;
+        AgentName = agentName;
+        DocTitle = docTitle;
+        StartedAt = DateTimeOffset.UtcNow;
+    }
 
     public Guid SessionId { get; }
+    public string AgentName { get; }
+    public string DocTitle { get; }
+    public DateTimeOffset StartedAt { get; }
 
     // Raised after every mutation so a panel can re-render. Fired OUTSIDE the lock: handlers
     // marshal to the UI thread and read the graph, which would deadlock if we still held Sync.

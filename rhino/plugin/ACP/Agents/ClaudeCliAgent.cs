@@ -8,7 +8,7 @@ namespace RhMcp;
 // CliAgent over Claude Code's stream-json stdio mode.
 internal sealed class ClaudeCliAgent : CliAgent
 {
-    public ClaudeCliAgent(AgentDefinition def) : base(def) { }
+    public ClaudeCliAgent(AgentDefinition def, string docTitle) : base(def, docTitle) { }
 
     protected override string NotFoundMessage =>
         "Claude CLI not found. Install Claude Code (claude.ai/install).";

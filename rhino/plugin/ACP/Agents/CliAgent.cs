@@ -36,10 +36,10 @@ internal abstract class CliAgent : IAgent
     // for a future panel/export; not yet surfaced on IAgent.
     internal Conversation Conversation { get; }
 
-    protected CliAgent(AgentDefinition def)
+    protected CliAgent(AgentDefinition def, string docTitle)
     {
         Definition = def;
-        Conversation = new Conversation(SessionId);
+        Conversation = new Conversation(SessionId, def.Name, docTitle);
     }
 
     // Thrown when the CLI isn't installed; should point the user at the installer.
@@ -169,7 +169,23 @@ internal abstract class CliAgent : IAgent
             lock (Gate)
                 CurrentTurn = null;
             Conversation.CompleteTurn();   // single robust completion point: runs on success and fault alike
+            PersistTurn();
             TurnGate.Release();
+        }
+    }
+
+    // Rewrite this conversation's persisted slot after each completed turn. Runs off-thread on the
+    // turn continuation; settings writes are not UI/doc APIs, so this is safe. Fail-soft — a
+    // settings hiccup must never fault the turn the user just ran.
+    void PersistTurn()
+    {
+        try
+        {
+            ConversationStore.Save(Conversation);
+        }
+        catch (Exception ex)
+        {
+            DebugLog($"persist failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
