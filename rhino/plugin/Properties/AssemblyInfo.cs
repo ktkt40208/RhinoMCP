@@ -1,5 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 
+using Rhino.PlugIns;
+
 // Plug-in Description Attributes - all of these are optional.
 // These will show in Rhino's option dialog, in the tab Plug-ins.
 [assembly: PlugInDescription(DescriptionType.Address, "146 Canal St Suite 320\nSeattle WA 98103")]

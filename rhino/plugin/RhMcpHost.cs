@@ -23,6 +23,13 @@ public static class RhinoMcpHost
 
     public static bool HasStarted(RhinoDoc doc) => Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server) && (server?.HasStarted ?? false);
 
+    // The port of the running listener for this doc, or null if none is up. The
+    // ACP agent needs this to point its MCP transport at the right document.
+    public static int? PortFor(RhinoDoc doc) =>
+        Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server) && server.HasStarted
+            ? server.Port
+            : null;
+
     private const int DefaultPort = 10500;
     public static int GetNextPort()
     {

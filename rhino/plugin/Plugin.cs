@@ -15,6 +15,7 @@ public class RhMcpPlugin : PlugIn
     protected override void OnShutdown()
     {
         CommandInterceptor.Detach();
+        AcpAgent.DisposeShared();
     }
 
     private void Register(object? sender, DocumentOpenEventArgs e)

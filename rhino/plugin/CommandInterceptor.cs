@@ -1,3 +1,6 @@
+using System.IO;
+using System.Threading.Tasks;
+
 namespace RhMcp;
 
 // Routes command-line entries that start with " to Claude.
@@ -73,9 +76,26 @@ internal static class CommandInterceptor
         return request.Length > 0 ? request : null;
     }
 
-    // Hands a captured request off. TODO: send to Claude; echoes for now.
+    // Hands a captured request to the ACP agent for the active document.
     public static void Route(string request)
     {
         RhinoApp.WriteLine($"{RoutedMarker} {request}");
+
+        RhinoDoc? doc = RhinoDoc.ActiveDoc;
+        int? port = doc is null ? null : RhinoMcpHost.PortFor(doc);
+        if (port is null)
+        {
+            RhinoApp.WriteLine($"{RoutedMarker} no MCP server is running for this document.");
+            return;
+        }
+
+        string url = $"http://localhost:{port.Value}/";
+        string cwd = !string.IsNullOrEmpty(doc!.Path)
+            ? Path.GetDirectoryName(doc.Path) ?? Path.GetTempPath()
+            : Path.GetTempPath();
+
+        _ = AcpAgent.Instance.PromptAsync(request, url, cwd).ContinueWith(
+            t => RhinoApp.WriteLine($"{RoutedMarker} error: {t.Exception?.GetBaseException().Message}"),
+            TaskContinuationOptions.OnlyOnFaulted);
     }
 }
