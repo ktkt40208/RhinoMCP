@@ -35,9 +35,14 @@ internal static class AgentHost
             agent = default!;
             return false;
         }
-        agent = For(doc, () => AgentFactory.Create(def));
+        string docTitle = DocTitle(doc);
+        agent = For(doc, () => AgentFactory.Create(def, docTitle));
         return true;
     }
+
+    // Saved file name, else a stable placeholder so a transcript is still identifiable.
+    private static string DocTitle(RhinoDoc doc) =>
+        string.IsNullOrEmpty(doc.Name) ? "Untitled" : doc.Name;
 
     private static bool TryResolveActiveDefinition(RhinoDoc doc, out AgentDefinition def)
     {

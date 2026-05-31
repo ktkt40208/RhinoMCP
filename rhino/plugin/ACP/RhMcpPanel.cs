@@ -29,10 +29,13 @@ public class RhMcpPanel : Panel
 
     private List<Attachment> Pending { get; } = new();
 
-    // Set by Part 6 to persist a conversation before "New conversation" drops it, and to feed the
-    // Prev Convos picker. Default no-ops so the panel works standalone.
-    internal Action<Conversation> PersistConversationHook { get; set; } = static _ => { };
-    internal Func<IReadOnlyList<string>> RecentConversationsHook { get; set; } = static () => [];
+    // Persist a conversation before "New conversation" drops it (turns are already saved on
+    // completion; this captures the final state). Overridable so the panel works standalone.
+    internal Action<Conversation> PersistConversationHook { get; set; } = ConversationStore.Save;
+
+    // Non-empty while reviewing a persisted transcript: the picker swaps the live view for a
+    // read-only render until Back returns to live.
+    private ConversationDto? Reviewing { get; set; }
 
     // Resubscribed on every agent switch; tracked so we can unhook the old one.
     private Conversation? Subscribed { get; set; }
@@ -55,6 +58,7 @@ public class RhMcpPanel : Panel
         TranscriptScroll.Content = TranscriptStack;
 
         AgentPicker.SelectedValueChanged += OnAgentPicked;
+        RecentPicker.SelectedValueChanged += OnRecentPicked;
         SendButton.Click += (_, _) => OnSendOrStop();
 
         Button settingsGear = new() { Text = "⚙", ToolTip = "AI Settings", Width = 32 };
@@ -182,11 +186,28 @@ public class RhMcpPanel : Panel
 
     private void PopulateRecents()
     {
-        RecentPicker.Items.Clear();
-        RecentPicker.Items.Add(new ListItem { Text = "Prev Convos", Key = string.Empty });
-        foreach (string label in RecentConversationsHook())
-            RecentPicker.Items.Add(new ListItem { Text = label, Key = label });
-        RecentPicker.SelectedIndex = 0;
+        Populating = true;
+        try
+        {
+            RecentPicker.Items.Clear();
+            RecentPicker.Items.Add(new ListItem { Text = "Prev Convos", Key = string.Empty });
+            foreach (ConversationDto convo in ConversationStore.List())
+                RecentPicker.Items.Add(new ListItem { Text = RecentLabel(convo), Key = convo.SessionId });
+            RecentPicker.SelectedIndex = 0;
+        }
+        finally
+        {
+            Populating = false;
+        }
+    }
+
+    private static string RecentLabel(ConversationDto convo)
+    {
+        string when = convo.StartedAt.ToLocalTime().ToString("MMM d HH:mm");
+        string first = convo.Turns.Count > 0 ? convo.Turns[0].Prompt : "(empty)";
+        if (first.Length > 32)
+            first = first[..32] + "…";
+        return $"{when} · {convo.AgentName} · {first}";
     }
 
     private void OnAgentPicked(object? sender, EventArgs e)
@@ -197,9 +218,35 @@ public class RhMcpPanel : Panel
         string? name = AgentPicker.SelectedKey;
         if (string.IsNullOrEmpty(name) || !TryDoc(out RhinoDoc doc))
             return;
+        Reviewing = null;   // switching agents returns to a live view
         AgentHost.SetActive(doc, name);
         UpdateModelLabel();
         Resubscribe();
+        Rerender();
+    }
+
+    private void OnRecentPicked(object? sender, EventArgs e)
+    {
+        if (Populating)
+            return;
+
+        string? sessionId = RecentPicker.SelectedKey;
+        if (string.IsNullOrEmpty(sessionId) || !ConversationStore.TryLoad(sessionId, out ConversationDto convo))
+        {
+            ExitReview();
+            return;
+        }
+        Reviewing = convo;
+        RenderReview(convo);
+    }
+
+    // Leave the read-only transcript and return to the live conversation.
+    private void ExitReview()
+    {
+        Reviewing = null;
+        Populating = true;
+        try { RecentPicker.SelectedIndex = 0; }
+        finally { Populating = false; }
         Rerender();
     }
 
@@ -241,6 +288,14 @@ public class RhMcpPanel : Panel
         // detached Eto controls risks an AppKit abort / ObjectDisposedException.
         if (!Loaded)
             return;
+
+        // While reviewing a persisted transcript, a live Changed event must not clobber the
+        // read-only view; the review is redrawn only by OnRecentPicked / Back.
+        if (Reviewing is { } reviewed)
+        {
+            RenderReview(reviewed);
+            return;
+        }
 
         TranscriptStack.Items.Clear();
 
@@ -386,6 +441,66 @@ public class RhMcpPanel : Panel
         Content = content,
     };
 
+    // Read-only render of a persisted transcript. Mirrors the live layout (bubbles + tool chips)
+    // but drives off the DTO and is never mutated by the off-thread Changed event.
+    private void RenderReview(ConversationDto convo)
+    {
+        if (!Loaded)
+            return;
+
+        TranscriptStack.Items.Clear();
+
+        Button back = new() { Text = "← Back to live" };
+        back.Click += (_, _) => ExitReview();
+        TranscriptStack.Items.Add(back);
+        TranscriptStack.Items.Add(SystemLine($"{convo.DocTitle} · {convo.AgentName} (read-only)"));
+
+        foreach (TurnEventDto ev in convo.Lifecycle)
+            TranscriptStack.Items.Add(SystemLine(ev.Text));
+
+        foreach (TurnDto turn in convo.Turns)
+        {
+            TranscriptStack.Items.Add(Bubble(turn.Prompt, true));
+            AppendDtoEvents(turn.Events);
+        }
+
+        SyncSendButton(false);
+        SendButton.Enabled = false;
+        ScrollToBottom();
+    }
+
+    private void AppendDtoEvents(IReadOnlyList<TurnEventDto> events)
+    {
+        System.Text.StringBuilder assistant = new();
+        void FlushAssistant()
+        {
+            if (assistant.Length == 0)
+                return;
+            TranscriptStack.Items.Add(Bubble(assistant.ToString(), false));
+            assistant.Clear();
+        }
+
+        foreach (TurnEventDto ev in events)
+        {
+            switch (ev.Kind)
+            {
+                case TurnEventKind.AssistantText:
+                    assistant.Append(ev.Text);
+                    break;
+                case TurnEventKind.ToolUse:
+                    FlushAssistant();
+                    TranscriptStack.Items.Add(ToolChip(new TurnEvent(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result)));
+                    break;
+                case TurnEventKind.Result:
+                    FlushAssistant();
+                    if (!string.IsNullOrWhiteSpace(ev.Text))
+                        TranscriptStack.Items.Add(Bubble(ev.Text, false));
+                    break;
+            }
+        }
+        FlushAssistant();
+    }
+
     private void AppendTurnEvents(Turn turn)
     {
         System.Text.StringBuilder assistant = new();
@@ -516,6 +631,7 @@ public class RhMcpPanel : Panel
 
     private void SyncSendButton(bool running)
     {
+        SendButton.Enabled = true;   // re-enable after a read-only review disabled it
         SendButton.Text = running ? "Stop" : "Send";
         SendButton.ToolTip = running ? "Cancel the current turn" : "Send (Enter)";
     }
@@ -546,6 +662,8 @@ public class RhMcpPanel : Panel
 
     private void OnSendOrStop()
     {
+        if (Reviewing is not null)   // read-only: Enter/click must not drive the live conversation
+            return;
         if (SendButton.Text == "Stop")
         {
             CancelActive();
@@ -589,6 +707,7 @@ public class RhMcpPanel : Panel
 
     private void OnNewConversation()
     {
+        Reviewing = null;   // a fresh conversation is always a live view
         if (TryActiveConversation(out Conversation convo))
             PersistConversationHook(convo);
 
