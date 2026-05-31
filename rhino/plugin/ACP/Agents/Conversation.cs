@@ -11,7 +11,14 @@ internal enum TurnEventKind
     SessionStarted,
 }
 
-internal sealed record TurnEvent(TurnEventKind Kind, string Text, DateTimeOffset At);
+// Args/Result are empty for kinds that don't carry them; ToolUse holds the tool's input JSON in
+// Args and (once the matching tool_result arrives) its output in Result so a chip can expand both.
+internal sealed record TurnEvent(
+    TurnEventKind Kind,
+    string Text,
+    DateTimeOffset At,
+    string Args = "",
+    string Result = "");
 
 // Mutated only while it is the current turn; Complete() freezes it permanently.
 internal sealed class Turn
@@ -51,31 +58,39 @@ internal sealed class Conversation
 
     public Guid SessionId { get; }
 
+    // Raised after every mutation so a panel can re-render. Fired OUTSIDE the lock: handlers
+    // marshal to the UI thread and read the graph, which would deadlock if we still held Sync.
+    public event Action? Changed;
+
     // Live references, not a snapshot — the current turn may still be appending.
     public IReadOnlyList<Turn> Turns { get { lock (Sync) return TurnList.ToArray(); } }
     public IReadOnlyList<TurnEvent> Lifecycle { get { lock (Sync) return LifecycleList.ToArray(); } }
 
     public Turn BeginTurn(string prompt)
     {
+        Turn turn;
         lock (Sync)
         {
-            Turn turn = new(prompt, Sync);
+            turn = new(prompt, Sync);
             TurnList.Add(turn);
             Current = turn;
-            return turn;
         }
+        Changed?.Invoke();
+        return turn;
     }
 
-    public void Record(TurnEventKind kind, string text)
+    public void Record(TurnEventKind kind, string text, string args = "", string result = "")
     {
         lock (Sync)
-            Current?.Add(new TurnEvent(kind, text, DateTimeOffset.UtcNow));
+            Current?.Add(new TurnEvent(kind, text, DateTimeOffset.UtcNow, args, result));
+        Changed?.Invoke();
     }
 
     public void NoteSessionStarted()
     {
         lock (Sync)
             LifecycleList.Add(new TurnEvent(TurnEventKind.SessionStarted, "session started", DateTimeOffset.UtcNow));
+        Changed?.Invoke();
     }
 
     public void CompleteTurn()
@@ -85,6 +100,7 @@ internal sealed class Conversation
             Current?.Complete();
             Current = null;   // stray late events after a terminal event are dropped, not mis-filed
         }
+        Changed?.Invoke();
     }
 
     // Flatten to plain text; assistant chunks appended raw to rejoin the stream.
