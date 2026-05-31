@@ -30,12 +30,21 @@ public static class AskUserTool
         AskUserMode mode = multiSelect ? AskUserMode.Multi : AskUserMode.Single;
         PendingQuestion pending = new(question, options, mode);
 
+        // The constructor collapses a literal "Other", so an options:["Other"] array survives the
+        // raw length guard above yet leaves no real options. Reject it the same way as an empty array.
+        if (pending.Options.Count == 0)
+            return "ask_user requires at least one option.";
+
         uint docSerial = doc.RuntimeSerialNumber;
         AskUserRegistry.Register(docSerial, pending);
 
-        bool attachedToConversation = TryConversation(doc, out Conversation conversation);
-        if (attachedToConversation)
-            conversation.SetPendingQuestion(pending);
+        // AgentHost's dictionaries are UI-thread-owned and unsynchronized; this tool body runs
+        // off the UI thread ([BackgroundThread]). Resolve the Conversation on the UI thread so the
+        // TryFor read can't race a user-driven New/SetActive mutation. Everything after this point
+        // (AskUserRegistry, PendingQuestion, RhinoApp.WriteLine, the await) is thread-safe.
+        ConversationLookup lookup = await ResolveConversationAsync(doc).ConfigureAwait(false);
+        if (lookup.Attached)
+            lookup.Conversation.SetPendingQuestion(pending);
 
         PrintPrompt(pending);
 
@@ -51,21 +60,30 @@ public static class AskUserTool
         finally
         {
             AskUserRegistry.Clear(docSerial, pending);
-            if (attachedToConversation)
-                conversation.ClearPendingQuestion(pending);
+            if (lookup.Attached)
+                lookup.Conversation.ClearPendingQuestion(pending);
         }
     }
 
-    private static bool TryConversation(RhinoDoc doc, out Conversation conversation)
+    private readonly record struct ConversationLookup(bool Attached, Conversation Conversation);
+
+    private static Task<ConversationLookup> ResolveConversationAsync(RhinoDoc doc)
     {
-        if (AgentHost.TryFor(doc, out IAgent agent) && agent is CliAgent cli)
+        TaskCompletionSource<ConversationLookup> tcs =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        RhinoApp.InvokeOnUiThread(new Action(() =>
         {
-            conversation = cli.Conversation;
-            return true;
-        }
-        conversation = default!;
-        return false;
+            try { tcs.SetResult(ResolveConversation(doc)); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        }), null);
+        return tcs.Task;
     }
+
+    // UI-thread only: reads AgentHost's unsynchronized dictionaries.
+    private static ConversationLookup ResolveConversation(RhinoDoc doc) =>
+        AgentHost.TryFor(doc, out IAgent agent) && agent is CliAgent cli
+            ? new ConversationLookup(true, cli.Conversation)
+            : new ConversationLookup(false, default!);
 
     private static void PrintPrompt(PendingQuestion pending)
     {
