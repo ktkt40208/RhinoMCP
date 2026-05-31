@@ -5,6 +5,8 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using Microsoft.Extensions.Logging;
+
 namespace RhMcp.Router;
 
 // Spawns, tracks, and tears down Rhino "slots". State lives in SlotStore

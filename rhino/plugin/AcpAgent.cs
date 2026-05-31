@@ -110,15 +110,15 @@ internal sealed class AcpAgent : IDisposable
             },
         }).ConfigureAwait(false);
 
-        // The HTTP MCP entry is the agent's hands on Rhino. `type` is the ACP
-        // transport discriminator — the field most likely to need tweaking
-        // against the installed adapter version (older builds only spoke stdio).
+        // The HTTP MCP entry is the agent's hands on Rhino. Adapter 0.39.0 validates
+        // mcpServers as a union; the http variant requires `headers` to be present as
+        // an array (empty is fine for a localhost listener), not just `type`+`url`.
         JsonElement session = await RequestAsync("session/new", new
         {
             cwd,
             mcpServers = new object[]
             {
-                new { type = "http", name = "rhino", url = mcpUrl },
+                new { type = "http", name = "rhino", url = mcpUrl, headers = Array.Empty<object>() },
             },
         }).ConfigureAwait(false);
 

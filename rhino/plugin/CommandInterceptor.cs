@@ -15,6 +15,11 @@ internal static class CommandInterceptor
     const char Sigil = '"';
     const string RoutedMarker = "[claude]";
 
+    // Rhino echoes a submitted command-line entry as `Command: <text>`. Anchoring on
+    // this prefix is what stops our own output (echoes, agent text, error JSON — any of
+    // which can contain a ") from being re-captured and routed in a loop.
+    const string CommandPrefix = "Command: ";
+
     // How far into the command history we've already scanned.
     static int HistoryCursor { get; set; }
 
@@ -64,15 +69,17 @@ internal static class CommandInterceptor
         }
     }
 
-    // The text after the leading " in a submitted line, or null if it isn't one.
+    // The request text from a submitted `Command: "..."` line, or null if the line
+    // isn't a sigil-led command submission (so plugin/agent output is never routed).
     static string? ExtractRequest(string line)
     {
-        if (line.Contains(RoutedMarker))   // skip our own echo
+        string trimmed = line.TrimStart();
+        if (!trimmed.StartsWith(CommandPrefix, StringComparison.Ordinal))
             return null;
-        int sigil = line.IndexOf(Sigil);
-        if (sigil < 0)
+        string entry = trimmed.Substring(CommandPrefix.Length).TrimStart();
+        if (entry.Length == 0 || entry[0] != Sigil)
             return null;
-        string request = line.Substring(sigil + 1).Trim();
+        string request = entry.Substring(1).Trim();
         return request.Length > 0 ? request : null;
     }
 
