@@ -488,14 +488,22 @@ internal sealed class AISettingsDialog : Dialog
         AgentDefinition[] definitions = Rows.Select(ToDefinition).ToArray();
         AISettings.SetAgents(definitions);
 
-        AgentRow? defaultRow = Rows.FirstOrDefault(r => r.IsDefault) ?? Rows.FirstOrDefault();
-        if (defaultRow is not null)
-            AISettings.DefaultAgentName = defaultRow.Name;
+        AgentRow defaultRow = Rows.FirstOrDefault(r => r.IsDefault) ?? Rows.First();
+        AISettings.DefaultAgentName = defaultRow.Name;
 
         AISettings.ExtraMcpServersJson = normalizedJson;
-        AISettings.DisabledTools = ToolBoxes
+
+        // ScanToolNames hides router-internal underscore tools from the checklist, so they have no
+        // checkbox to round-trip; carry forward any that were already disabled instead of silently
+        // dropping them when the user saves.
+        IEnumerable<string> uncheckedNames = ToolBoxes
             .Where(b => b.Checked != true)
-            .Select(b => b.Text)
+            .Select(b => b.Text);
+        IEnumerable<string> preservedUnderscore = AISettings.DisabledTools
+            .Where(n => n.StartsWith('_'));
+        AISettings.DisabledTools = uncheckedNames
+            .Concat(preservedUnderscore)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         AgentRegistry.Refresh();
@@ -571,9 +579,9 @@ internal sealed class AISettingsDialog : Dialog
         public bool Enabled { get; set; }
         public bool IsDefault { get; set; }
 
-        public string StatusGlyph => Available ? "available" : "not found";
-        public string DefaultGlyph => IsDefault ? "default" : string.Empty;
-        public string EnabledGlyph => Enabled ? "on" : "off";
+        public string StatusGlyph => Available ? "✓" : "✗";
+        public string DefaultGlyph => IsDefault ? "★" : string.Empty;
+        public string EnabledGlyph => Enabled ? "✓" : string.Empty;
 
         public AgentRow(
             string name, AgentAdapter adapter, string command, string searchPathsText, string model,
