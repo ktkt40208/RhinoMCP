@@ -15,6 +15,8 @@ internal sealed class ClaudeCliAgent : CliAgent
     protected override void ConfigureArguments(ProcessStartInfo psi, string mcpUrl)
     {
         // Same {"mcpServers":{...}} shape Claude Code expects; this is the agent's hands.
+        // We connect straight to this doc's HTTP listener — not via the router — so the
+        // agent always operates on the exact doc the command was run in.
         string mcpConfig = $$"""
             {
               "mcpServers": {
@@ -25,15 +27,17 @@ internal sealed class ClaudeCliAgent : CliAgent
 
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--input-format");
-        psi.ArgumentList.Add("stream-json");          // long-lived: turns arrive on stdin
+        psi.ArgumentList.Add("stream-json");
         psi.ArgumentList.Add("--output-format");
         psi.ArgumentList.Add("stream-json");
         psi.ArgumentList.Add("--verbose");            // required for stream-json under --print
         psi.ArgumentList.Add("--mcp-config");
         psi.ArgumentList.Add(mcpConfig);
-        psi.ArgumentList.Add("--strict-mcp-config");  // ignore the user's other MCP servers
+        psi.ArgumentList.Add("--strict-mcp-config");
         psi.ArgumentList.Add("--allowedTools");
-        psi.ArgumentList.Add("mcp__rhino*");          // only Rhino MCP tools; Bash/Edit/etc. denied
+        psi.ArgumentList.Add("mcp__rhino*");
+        psi.ArgumentList.Add("--append-system-prompt");
+        psi.ArgumentList.Add(AskUserSteer);
         psi.ArgumentList.Add("--disable-slash-commands");
         psi.ArgumentList.Add(Started ? "--resume" : "--session-id");
         psi.ArgumentList.Add(SessionId.ToString());
@@ -57,14 +61,14 @@ internal sealed class ClaudeCliAgent : CliAgent
         {
             case "system":
                 if (root.TryGetProperty("subtype", out JsonElement sub) && sub.GetString() == "init")
-                    RhinoApp.WriteLine($"[{Name}] session started.");
+                    EmitSessionStarted();
                 break;
             case "assistant":
                 EchoAssistant(root);
                 break;
             case "result":
                 if (root.TryGetProperty("result", out JsonElement res) && res.ValueKind is JsonValueKind.String)
-                    RhinoApp.WriteLine($"\n[{Name}] {res.GetString()}");
+                    EmitResult(res.GetString());
                 CompleteTurn(proc);   // any `result` ends the current turn
                 break;
         }
@@ -84,11 +88,11 @@ internal sealed class ClaudeCliAgent : CliAgent
             {
                 case "text":
                     if (block.TryGetProperty("text", out JsonElement t))
-                        RhinoApp.Write(t.GetString());
+                        EmitAssistantText(t.GetString());
                     break;
                 case "tool_use":
                     if (block.TryGetProperty("name", out JsonElement n))
-                        RhinoApp.WriteLine($"\n[{Name}] ⚙ {n.GetString()}");
+                        EmitToolUse(n.GetString());
                     break;
             }
         }

@@ -46,7 +46,7 @@ internal sealed class CodexCliAgent : CliAgent
         switch (typeEl.GetString())
         {
             case "session_configured":   // verify: Codex init event name
-                RhinoApp.WriteLine($"[{Name}] session started.");
+                EmitSessionStarted();
                 break;
             case "agent_message":        // verify: assistant text event name
             case "mcp_tool_call":        // verify: tool-call event name
@@ -54,7 +54,7 @@ internal sealed class CodexCliAgent : CliAgent
                 break;
             case "task_complete":        // verify: terminal/result event name
                 if (msg.TryGetProperty("last_agent_message", out JsonElement res) && res.ValueKind is JsonValueKind.String)
-                    RhinoApp.WriteLine($"\n[{Name}] {res.GetString()}");
+                    EmitResult(res.GetString());
                 CompleteTurn(proc);   // the terminal event ends the current turn
                 break;
         }
@@ -65,10 +65,10 @@ internal sealed class CodexCliAgent : CliAgent
         // Assistant text rides directly on the event; tool calls carry the invoked tool name.
         if (msg.TryGetProperty("message", out JsonElement text) && text.ValueKind is JsonValueKind.String)
         {
-            RhinoApp.Write(text.GetString());
+            EmitAssistantText(text.GetString());
             return;
         }
         if (msg.TryGetProperty("tool", out JsonElement tool) && tool.ValueKind is JsonValueKind.String)  // verify: mcp_tool_call field name
-            RhinoApp.WriteLine($"\n[{Name}] ⚙ {tool.GetString()}");
+            EmitToolUse(tool.GetString());
     }
 }

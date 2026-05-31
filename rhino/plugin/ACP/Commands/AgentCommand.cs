@@ -19,6 +19,7 @@ public abstract class AgentCommand : Command
     {
         // NOTE : On Rhino 8 Mac Get Literal String doesn't work so idk
         GetString get = new();
+        get.SetCommandPrompt(EnglishName);
 
         if (get.GetLiteralString() != Rhino.Input.GetResult.String) return Result.Cancel;
         string request = get.StringResult();

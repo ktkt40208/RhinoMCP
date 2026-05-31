@@ -29,6 +29,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="../../art/logo.svg" LogicalName="RhMcp.logo.svg" />
+  </ItemGroup>
+
   <PropertyGroup>
     <AspNetCoreRuntimeVersion>8.0.*</AspNetCoreRuntimeVersion>
   </PropertyGroup>

@@ -1,9 +1,13 @@
+using System.Drawing;
+using System.IO;
+using System.Reflection;
 using Rhino.PlugIns;
 
 namespace RhMcp;
 
 public class RhMcpPlugin : PlugIn
 {
+    private const string IconResourceName = "RhMcp.logo.svg";
 
     private CommandInterceptorHost? CommandInterceptors { get; set; }
 
@@ -11,8 +15,33 @@ public class RhMcpPlugin : PlugIn
     {
         RhinoDoc.BeginOpenDocument += Register;
         CommandInterceptors = new CommandInterceptorHost();
-        Rhino.UI.Panels.RegisterPanel(this, typeof(RhMcpPanel), "Rhino MCP", null);
+
+        Rhino.UI.Panels.RegisterPanel(this, typeof(RhMcpPanel), "AI", LoadPanelIcon(), Rhino.UI.PanelType.PerDoc);
         return base.OnLoad(ref errorMessage);
+    }
+
+    // GetHicon isn't guaranteed on every platform, so fall back to no icon rather than fail OnLoad.
+    private static System.Drawing.Icon? LoadPanelIcon()
+    {
+        try
+        {
+            Assembly assembly = typeof(RhMcpPlugin).Assembly;
+            using Stream? stream = assembly.GetManifestResourceStream(IconResourceName);
+            if (stream is null)
+                return null;
+
+            using StreamReader reader = new(stream);
+            string svg = reader.ReadToEnd();
+
+            Size size = Rhino.UI.Panels.IconSizeInPixels;
+            int pixels = size.Width > 0 ? size.Width : 36;
+            using Bitmap bitmap = Rhino.UI.DrawingUtilities.BitmapFromSvg(svg, pixels, pixels, adjustForDarkMode: true);
+            return System.Drawing.Icon.FromHandle(bitmap.GetHicon());
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     protected override void OnShutdown()
