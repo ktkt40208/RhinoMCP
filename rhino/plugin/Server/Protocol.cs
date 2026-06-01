@@ -10,8 +10,9 @@ namespace RhMcp.Server;
 
 internal sealed class JsonRpcRequest
 {
-    [JsonInclude]
-    public string Jsonrpc { get; } = "2.0";
+    // init-settable so the deserializer binds the wire value rather than the
+    // initializer; lets a malformed `jsonrpc` survive to where it can be checked.
+    public string Jsonrpc { get; init; } = "2.0";
     public JsonElement? Id { get; set; }
     public string Method { get; set; } = "";
     public JsonElement? Params { get; set; }

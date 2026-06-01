@@ -14,6 +14,7 @@ public abstract class AcpConnection : IDisposable
     private protected JsonRpcEndpoint Endpoint { get; }
     private IAcpTransport Transport { get; }
     private CancellationTokenSource Cts { get; } = new();
+    private Task? ReadLoop { get; set; }
 
     private protected AcpConnection(IAcpTransport transport)
     {
@@ -21,8 +22,18 @@ public abstract class AcpConnection : IDisposable
         Endpoint = new JsonRpcEndpoint(transport);
     }
 
-    /// <summary>Starts the background read loop. Call once after construction.</summary>
-    public void Start() => _ = Task.Run(() => Endpoint.RunAsync(Cts.Token));
+    /// <summary>
+    /// The background read loop, faulting only on an unexpected failure. The owner can observe this
+    /// to learn the connection has died (a clean stream close or cancellation completes it). Throws
+    /// if <see cref="Start"/> has not been called.
+    /// </summary>
+    public Task Completion => ReadLoop ?? throw new InvalidOperationException("Start has not been called.");
+
+    /// <summary>
+    /// Starts the background read loop. Call once after construction; a second call is a no-op so we
+    /// never spawn a duplicate loop on the same transport.
+    /// </summary>
+    public void Start() => ReadLoop ??= Task.Run(() => Endpoint.RunAsync(Cts.Token));
 
     private protected async ValueTask<TResponse> RequestAsync<TRequest, TResponse>(string method, TRequest request, CancellationToken ct)
     {
@@ -30,7 +41,9 @@ public abstract class AcpConnection : IDisposable
         JsonRpcResponse response = await Endpoint.SendRequestAsync(method, @params, ct).ConfigureAwait(false);
         if (response.Error is not null)
             throw new AcpException(response.Error);
-        return response.Result is { } result ? result.Deserialize<TResponse>(AcpJson.Options)! : default!;
+        if (response.Result is not { } result)
+            throw new AcpException($"Response to '{method}' had neither result nor error.");
+        return result.Deserialize<TResponse>(AcpJson.Options)!;
     }
 
     private protected ValueTask NotifyAsync<TNotification>(string method, TNotification notification, CancellationToken ct) =>
@@ -57,7 +70,9 @@ public abstract class AcpConnection : IDisposable
     private protected void HandleNotification<TNotification>(string method, Func<TNotification, CancellationToken, ValueTask> impl) =>
         Endpoint.OnNotification(method, async (notification, ct) =>
         {
-            TNotification parsed = notification.Params is { } pe ? pe.Deserialize<TNotification>(AcpJson.Options)! : default!;
+            if (notification.Params is not { } pe)
+                throw new AcpException($"Missing params for notification '{method}'", (int)JsonRpcErrorCode.InvalidParams);
+            TNotification parsed = pe.Deserialize<TNotification>(AcpJson.Options)!;
             await impl(parsed, ct).ConfigureAwait(false);
         });
 

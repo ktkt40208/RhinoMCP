@@ -228,37 +228,70 @@ public sealed class SlotStore : IDisposable
     // only excludes ports already claimed in the DB.
     public int ReservePort(string slotId, int basePort, Func<int, bool> isPortListening)
     {
-        lock (_connLock)
+        // The OS probe (TcpClient.ConnectAsync with a ~200ms timeout per port) is slow blocking
+        // I/O. Holding _connLock and an open BEGIN IMMEDIATE write transaction across the whole
+        // scan would pin the cross-process SQLite write lock for the duration, serialising every
+        // other router's write path behind this scan. So: snapshot the DB-taken ports in a short
+        // read, drop the lock, probe with nothing held, then take a fresh BEGIN IMMEDIATE only for
+        // the final claim (re-checking the port wasn't taken by a peer while we probed).
+        int candidate = basePort - 1;
+        while (true)
         {
-            using var tx = Connection.BeginTransaction(deferred: false);
+            HashSet<int> taken = SnapshotTakenPorts();
 
-            var taken = new HashSet<int>();
-            using (var cmd = Connection.CreateCommand())
-            {
-                cmd.Transaction = tx;
-                cmd.CommandText = "SELECT port FROM slots WHERE port IS NOT NULL;";
-                using var r = cmd.ExecuteReader();
-                while (r.Read())
-                    taken.Add(r.GetInt32(0));
-            }
-
-            for (int p = basePort; p < 65000; p++)
+            int picked = -1;
+            for (int p = candidate + 1; p < 65000; p++)
             {
                 if (taken.Contains(p))
                     continue;
                 if (isPortListening(p))
                     continue;
-                Exec(tx, "UPDATE slots SET port=$p WHERE slot_id=$s;", ("$p", p), ("$s", slotId));
-                tx.Commit();
-                return p;
+                picked = p;
+                break;
             }
 
-            tx.Rollback();
-            throw new InvalidOperationException("No free ports available in spawn range.");
+            if (picked < 0)
+                throw new InvalidOperationException("No free ports available in spawn range.");
+
+            candidate = picked;
+
+            lock (_connLock)
+            {
+                using SqliteTransaction tx = Connection.BeginTransaction(deferred: false);
+
+                bool stolen = ScalarLong(tx,
+                    "SELECT COUNT(*) FROM slots WHERE port=$p;", ("$p", picked)) > 0;
+                if (stolen)
+                {
+                    // A peer claimed this port between our probe and now; resume scanning above it.
+                    tx.Rollback();
+                    continue;
+                }
+
+                Exec(tx, "UPDATE slots SET port=$p WHERE slot_id=$s;", ("$p", picked), ("$s", slotId));
+                tx.Commit();
+                return picked;
+            }
         }
     }
 
-    public ChildRhino? WaitForReady(string slotId, TimeSpan timeout, CancellationToken ct = default)
+    private HashSet<int> SnapshotTakenPorts()
+    {
+        lock (_connLock)
+        {
+            HashSet<int> taken = new();
+            using SqliteCommand cmd = Connection.CreateCommand();
+            cmd.CommandText = "SELECT port FROM slots WHERE port IS NOT NULL;";
+            using SqliteDataReader r = cmd.ExecuteReader();
+            while (r.Read())
+                taken.Add(r.GetInt32(0));
+            return taken;
+        }
+    }
+
+    // Async so the poll wait doesn't block the async router thread and honours cancellation
+    // promptly (Task.Delay observes ct, Thread.Sleep does not).
+    public async Task<ChildRhino?> WaitForReadyAsync(string slotId, TimeSpan timeout, CancellationToken ct = default)
     {
         DateTime deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -269,7 +302,7 @@ public sealed class SlotStore : IDisposable
                 return null;
             if (row.Status == SlotStatus.Ready)
                 return row;
-            Thread.Sleep(200);
+            await Task.Delay(200, ct).ConfigureAwait(false);
         }
         return null;
     }
@@ -464,8 +497,8 @@ public sealed class SlotStore : IDisposable
 
     private static ChildRhino ReadRow(IDataReader r) => new(
         SlotId: r.GetString(r.GetOrdinal("slot_id")),
-        Port: r.IsDBNull(r.GetOrdinal("port")) ? 0 : r.GetInt32(r.GetOrdinal("port")),
-        Pid: r.IsDBNull(r.GetOrdinal("pid")) ? 0 : r.GetInt32(r.GetOrdinal("pid")),
+        Port: r.IsDBNull(r.GetOrdinal("port")) ? null : r.GetInt32(r.GetOrdinal("port")),
+        Pid: r.IsDBNull(r.GetOrdinal("pid")) ? null : r.GetInt32(r.GetOrdinal("pid")),
         Version: r.GetString(r.GetOrdinal("version")),
         Adopted: r.GetInt32(r.GetOrdinal("adopted")) != 0,
         Status: Enum.Parse<SlotStatus>(r.GetString(r.GetOrdinal("status")), true));

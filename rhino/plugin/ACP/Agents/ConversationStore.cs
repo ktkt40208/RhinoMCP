@@ -14,29 +14,44 @@ internal static class ConversationStore
 
     private static PersistentSettings Node => AISettings.Conversations;
 
+    // Serializes the read-modify-write on the shared Conversations node. Save runs off-thread
+    // from multiple agents (CliAgent, AcpAgent), one per doc; without this, one Save's SetString
+    // or DeleteItem can interleave with another's Keys enumeration. Monitor is reentrant, so the
+    // Prune -> List nesting inside a held Save is fine.
+    private static readonly object Gate = new();
+
     // Snapshot the live graph and rewrite this session's slot, then prune oldest beyond the cap.
     public static void Save(Conversation conversation)
     {
         ConversationDto dto = Snapshot(conversation);
-        Node.SetString(dto.SessionId, JsonSerializer.Serialize(dto, McpSerializer.Options));
-        Prune();
+        lock (Gate)
+        {
+            Node.SetString(dto.SessionId, JsonSerializer.Serialize(dto, McpSerializer.Options));
+            Prune();
+        }
     }
 
     // Recents first (newest StartedAt). Corrupt slots are skipped, never thrown.
     public static IReadOnlyList<ConversationDto> List()
     {
         List<ConversationDto> all = [];
-        foreach (string key in KeysSnapshot())
+        lock (Gate)
         {
-            if (TryRead(key, out ConversationDto dto))
-                all.Add(dto);
+            foreach (string key in KeysSnapshot())
+            {
+                if (TryRead(key, out ConversationDto dto))
+                    all.Add(dto);
+            }
         }
         all.Sort(static (a, b) => b.StartedAt.CompareTo(a.StartedAt));
         return all;
     }
 
-    public static bool TryLoad(string sessionId, out ConversationDto conversation) =>
-        TryRead(sessionId, out conversation);
+    public static bool TryLoad(string sessionId, out ConversationDto conversation)
+    {
+        lock (Gate)
+            return TryRead(sessionId, out conversation);
+    }
 
     private static bool TryRead(string key, out ConversationDto conversation)
     {

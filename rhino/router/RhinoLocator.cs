@@ -2,10 +2,29 @@ using System.Runtime.InteropServices;
 
 namespace RhMcp.Router;
 
-// Resolves a full path to Rhino.exe (Windows) or the Rhinoceros binary (macOS)
-// for a given version string. Versions: "8" | "9" | "WIP".
+// Resolves a full path to Rhino.exe (Windows) or the Rhinoceros app bundle (macOS)
+// for a given version token. Accepted tokens are exactly the keys of VersionMap
+// below: "8" | "9" | "WIP". "9" and "WIP" are aliases that both resolve to the
+// current WIP install (Rhino 9 ships only as a WIP at time of writing); they are
+// kept distinct so callers can ask for "the next major" or "whatever WIP" by name.
 public static class RhinoLocator
 {
+    // The single canonical version-token-to-install mapping, shared by both the
+    // platform resolve branches and ListInstalledVersions so a token can never
+    // mean one thing on disk and another in the advertised list. Each token lists
+    // the install folder names to probe, in preference order: the Windows entry
+    // is a subfolder of C:\Program Files, the macOS entry an app bundle under
+    // /Applications.
+    private sealed record VersionInstall(string WindowsFolder, string MacBundle);
+
+    private static IReadOnlyDictionary<string, VersionInstall> VersionMap { get; } =
+        new Dictionary<string, VersionInstall>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["8"] = new VersionInstall("Rhino 8", "Rhino 8.app"),
+            ["9"] = new VersionInstall("Rhino 9 WIP", "RhinoWIP.app"),
+            ["WIP"] = new VersionInstall("Rhino 9 WIP", "RhinoWIP.app"),
+        };
+
     public static string ResolveRhinoExe(string version)
     {
         if (TryResolve(version, out string path))
@@ -20,67 +39,42 @@ public static class RhinoLocator
     {
         path = string.Empty;
 
+        if (!VersionMap.TryGetValue(version, out VersionInstall? install))
+            return false;
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            IEnumerable<string> directories = Directory.EnumerateDirectories(@$"C:\Program Files\", "Rhino*");
-            foreach(string dir in MatchVersionDirectories(directories, version))
-            {
-                string candidate = Path.Combine(dir, "System", "Rhino.exe");
-                // It's unlikely, but not impossible!
-                if (!File.Exists(candidate)) continue;
-                path = candidate;
-                return true;
-            }
-
-            if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
-            {
-                path = @$"C:\Program Files\Rhino 9 WIP\System\Rhino.exe";
-                return File.Exists(path);
-            }
-
-            return false;
+            string candidate = Path.Combine(@"C:\Program Files", install.WindowsFolder, "System", "Rhino.exe");
+            if (!File.Exists(candidate))
+                return false;
+            path = candidate;
+            return true;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            IEnumerable<string> directories = Directory.EnumerateDirectories(@$"/Applications/", "Rhino*");
-            foreach(string rhinoDir in MatchVersionDirectories(directories, version))
-            {
-                path = rhinoDir;
-                return true;
-            }
-
-            if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
-            {
-                path = $"/Applications/RhinoWIP.app";
-                return Directory.Exists(path);
-            }
-
-            return false;
+            string candidate = Path.Combine("/Applications", install.MacBundle);
+            if (!Directory.Exists(candidate))
+                return false;
+            path = candidate;
+            return true;
         }
 
         return false;
     }
 
-    // Filters install directories down to those matching the requested version.
-    // Kept as a pure, internal seam so the version-matching logic (the source of
-    // a past inverted-match bug that picked a sibling version) is unit-testable
+    // The version tokens this locator understands, in advertised order. Kept as a
+    // pure, internal seam so the token set (the source of a past mismatch between
+    // the documented tokens and what was actually advertised) is unit-testable
     // without a real Rhino install on disk.
-    internal static IEnumerable<string> MatchVersionDirectories(IEnumerable<string> directories, string version)
-    {
-        foreach (string dir in directories)
-        {
-            if (dir.Contains(version, StringComparison.OrdinalIgnoreCase))
-                yield return dir;
-        }
-    }
+    internal static IReadOnlyList<string> KnownVersionTokens => [.. VersionMap.Keys];
 
     public static IEnumerable<string> ListInstalledVersions()
     {
-        foreach (string v in new[] { "8", "9", "10", "11", "12", "WIP" })
+        foreach (string version in KnownVersionTokens)
         {
-            if (TryResolve(v, out _))
-                yield return v;
+            if (TryResolve(version, out _))
+                yield return version;
         }
     }
 }

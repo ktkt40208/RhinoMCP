@@ -174,10 +174,17 @@ public class AIPAnel : Panel
         base.OnUnLoad(e);
     }
 
+    // Resolve only this panel's own document. No ActiveDoc fallback: a PerDoc panel whose document
+    // has vanished must no-op, never act on whatever document happens to be active now.
     private bool TryDoc(out RhinoDoc doc)
     {
-        doc = RhinoDoc.FromRuntimeSerialNumber(DocSerial) ?? RhinoDoc.ActiveDoc;
-        return doc is not null;
+        if (RhinoDoc.FromRuntimeSerialNumber(DocSerial) is { } own)
+        {
+            doc = own;
+            return true;
+        }
+        doc = default!;
+        return false;
     }
 
     private void Reload()

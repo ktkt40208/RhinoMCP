@@ -77,9 +77,17 @@ internal sealed class ClaudeAcpAgent : IAcpAgent, IDisposable
         }
     }
 
-    // Killing the process faults the in-flight turn; the next prompt respawns with --resume.
+    // Resolve the in-flight turn as a clean cancel before tearing the process down, so a deliberate
+    // cancel ends the turn with StopReason.Cancelled instead of faulting into the IOException the
+    // read loop raises on exit (which AgentDispatch would print as a user-visible error line). This
+    // wins the TCS first; the read loop's later TrySetException is then a no-op. The next prompt
+    // respawns with --resume.
     public ValueTask SessionCancelAsync(CancelNotification notification, CancellationToken cancellationToken = default)
     {
+        TaskCompletionSource<StopReason>? turn;
+        lock (Gate)
+            turn = CurrentTurn;
+        turn?.TrySetResult(StopReason.Cancelled);
         Kill();
         return default;
     }

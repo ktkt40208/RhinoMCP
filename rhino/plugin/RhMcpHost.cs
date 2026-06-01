@@ -164,16 +164,9 @@ public static class RhinoMcpHost
         }
     }
 
-    // MUST match the router's RouterPaths.ListenersDir, or the router never sees
-    // our announcement. Fixed per-user dir, not GetTempPath() (drifts with $TMPDIR).
-    private static string ListenerDropDir()
-    {
-        string? overrideRoot = Environment.GetEnvironmentVariable("RHINO_MCP_HOME");
-        string root = string.IsNullOrEmpty(overrideRoot)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "McNeel")
-            : overrideRoot;
-        return Path.Combine(root, "rhino-mcp", "listeners");
-    }
+    // Shared with the router via the linked RouterPaths source file, so the
+    // drop-dir contract has one owner and can't drift between the two assemblies.
+    private static string ListenerDropDir() => RhMcp.Router.RouterPaths.ListenersDir;
 
     // Stop the listener bound to the given port and close its associated doc
     // without keeping any save artefacts. Used by the router's control channel

@@ -38,10 +38,30 @@ internal static class GeminiConnection
         proc.Start();
         proc.BeginErrorReadLine();
 
-        ProcessStdioTransport transport = new(proc);
-        ClientSideConnection connection = new(_ => client, transport);
-        connection.Start();
-        return connection;
+        // Ownership of proc transfers to ProcessStdioTransport.Dispose only once the connection is
+        // returned; any throw before that (transport ctor, client factory, connection.Start) would
+        // otherwise orphan the spawned process, so kill it and rethrow.
+        try
+        {
+            ProcessStdioTransport transport = new(proc);
+            ClientSideConnection connection = new(_ => client, transport);
+            connection.Start();
+            return connection;
+        }
+        catch
+        {
+            try
+            {
+                if (!proc.HasExited)
+                    proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // process already gone
+            }
+            proc.Dispose();
+            throw;
+        }
     }
 
     // Last existing candidate wins, matching CliAgent.TryResolveCommand: Rhino's launch PATH often

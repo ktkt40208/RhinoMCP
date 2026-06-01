@@ -95,7 +95,7 @@ internal sealed class CommandInterceptor : IDisposable
         {
             case "cancel":
             case "stop":
-                if (AgentHost.Find(Doc) is IAgent running)
+                if (AgentHost.TryFindActive(Doc, out IAgent running))
                     running.Cancel();
                 else
                     RhinoApp.WriteLine($"{RoutedMarker} nothing running.");

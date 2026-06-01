@@ -66,8 +66,20 @@ internal static class AgentHost
         return probe;
     }
 
-    public static IAgent? Find(RhinoDoc doc) =>
-        Agents.FirstOrDefault(kv => kv.Key.Doc == doc.RuntimeSerialNumber).Value;
+    // The active pooled agent for the doc, so a control verb (cancel/stop) acts on the running
+    // turn rather than an arbitrary idle agent the doc happened to drive earlier. Resolves the
+    // active definition's name and looks up only that pooled entry; false when none is pooled.
+    public static bool TryFindActive(RhinoDoc doc, out IAgent agent)
+    {
+        if (TryResolveActiveDefinition(doc, out AgentDefinition def) &&
+            Agents.TryGetValue((doc.RuntimeSerialNumber, def.Name), out IAgent? existing))
+        {
+            agent = existing;
+            return true;
+        }
+        agent = default!;
+        return false;
+    }
 
     public static void Stop(RhinoDoc doc)
     {

@@ -48,7 +48,11 @@ public static class GH2_ApplyGraphTool
         {
             foreach (var s in sliders)
             {
-                if (TryPlaceSlider(doc, s, out var slider, out var err))
+                if (keyToObj.ContainsKey(s.Key))
+                {
+                    placeErrors.Add(new PlaceError(s.Key, "duplicate key"));
+                }
+                else if (TryPlaceSlider(doc, s, out var slider, out var err))
                 {
                     keyToObj[s.Key] = slider!;
                     placed.Add(new PlacedRef(s.Key, slider!.InstanceId, "Slider"));
@@ -64,7 +68,11 @@ public static class GH2_ApplyGraphTool
         {
             foreach (var c in components)
             {
-                if (TryPlaceComponent(doc, c, out var obj, out var err))
+                if (keyToObj.ContainsKey(c.Key))
+                {
+                    placeErrors.Add(new PlaceError(c.Key, "duplicate key"));
+                }
+                else if (TryPlaceComponent(doc, c, out var obj, out var err))
                 {
                     keyToObj[c.Key] = obj!;
                     placed.Add(new PlacedRef(c.Key, obj!.InstanceId, GH2_Utils.ClassifyKind(obj.GetType())));

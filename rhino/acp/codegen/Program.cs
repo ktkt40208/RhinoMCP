@@ -5,6 +5,11 @@ using System.Text.Json;
 // src/Generated/. Run from the repo root: `dotnet run --project rhino/acp/codegen`.
 // Output is deterministic (defs iterated in sorted order) so a clean regen produces no diff.
 
+// Committed Generated/*.g.cs are pure LF; force LF on write so a Windows regen (where
+// StringBuilder.AppendLine emits Environment.NewLine = CRLF) does not produce a spurious diff.
+static void WriteGenerated(string path, string content) =>
+    File.WriteAllText(path, content.Replace("\r\n", "\n"));
+
 string root = args.Length > 0 ? args[0] : "rhino/acp/schema/schema.json";
 string metaPath = args.Length > 1 ? args[1] : "rhino/acp/schema/meta.json";
 string outDir = args.Length > 2 ? args[2] : "rhino/acp/src/Generated";
@@ -137,12 +142,16 @@ void EmitProps(StringBuilder sb, string ownerType, JsonElement s, string? discPr
     if (!forceOptional && s.TryGetProperty("required", out JsonElement req))
         foreach (JsonElement x in req.EnumerateArray()) required.Add(x.GetString()!);
 
+    HashSet<string> emitted = new(StringComparer.Ordinal);
     foreach (JsonProperty p in props.EnumerateObject())
     {
         if (p.Name == discProp) continue;
         bool isReq = required.Contains(p.Name);
         string member = Pascal(p.Name);
         if (member == ownerType) member += "Value";
+        if (!emitted.Add(member))
+            throw new InvalidOperationException(
+                $"{ownerType}: JSON property '{p.Name}' Pascal-folds to member '{member}', which already exists on this record.");
         Doc(sb, "    ", p.Value);
         sb.AppendLine($"    [JsonPropertyName(\"{p.Name}\")]");
         string reqKw = isReq ? "required " : string.Empty;
@@ -202,7 +211,7 @@ List<string> names = defs.EnumerateObject().Select(d => d.Name).OrderBy(n => n, 
         sb.AppendLine("    });");
         sb.AppendLine("}");
     }
-    File.WriteAllText(Path.Combine(outDir, "Enums.g.cs"), sb.ToString());
+    WriteGenerated(Path.Combine(outDir, "Enums.g.cs"), sb.ToString());
 }
 
 // ---- Unions.g.cs (4 discriminated + McpServer) ---------------------------------------------
@@ -292,7 +301,7 @@ JsonElement PayloadOf(JsonElement branch) =>
         EmitUnionWithDefault(sb, "McpServer", "type", variants, "stdio");
     }
 
-    File.WriteAllText(Path.Combine(outDir, "Unions.g.cs"), sb.ToString());
+    WriteGenerated(Path.Combine(outDir, "Unions.g.cs"), sb.ToString());
 }
 
 // Variant of EmitUnion whose converter tolerates a missing discriminator (falls back to defaultTag).
@@ -377,6 +386,7 @@ void EmitUnionWithDefault(StringBuilder sb, string baseName, string discProp, Li
             sb.AppendLine("{");
             // Merge: emit each distinct property once; required only if required in every branch.
             HashSet<string> seen = new();
+            HashSet<string> emitted = new(StringComparer.Ordinal);
             foreach (JsonElement b in branches)
             {
                 if (!b.TryGetProperty("properties", out JsonElement props)) continue;
@@ -387,6 +397,9 @@ void EmitUnionWithDefault(StringBuilder sb, string baseName, string discProp, Li
                         && rq.EnumerateArray().Any(x => x.GetString() == p.Name));
                     string member = Pascal(p.Name);
                     if (member == name) member += "Value";
+                    if (!emitted.Add(member))
+                        throw new InvalidOperationException(
+                            $"{name}: JSON property '{p.Name}' Pascal-folds to member '{member}', which already exists on this record.");
                     Doc(sb, "    ", p.Value);
                     sb.AppendLine($"    [JsonPropertyName(\"{p.Name}\")]");
                     sb.AppendLine($"    public {(isReq ? "required " : "")}{CsType(p.Value, isReq)} {member} {{ get; init; }}");
@@ -395,7 +408,7 @@ void EmitUnionWithDefault(StringBuilder sb, string baseName, string discProp, Li
             sb.AppendLine("}");
         }
     }
-    File.WriteAllText(Path.Combine(outDir, "Types.g.cs"), sb.ToString());
+    WriteGenerated(Path.Combine(outDir, "Types.g.cs"), sb.ToString());
 }
 
 // ---- Methods.g.cs (constants, protocol version, role interfaces) ---------------------------
@@ -424,12 +437,16 @@ void EmitUnionWithDefault(StringBuilder sb, string baseName, string discProp, Li
         foreach (JsonProperty m in methods.EnumerateObject())
         {
             string path = m.Value.GetString()!;
-            if (!byMethod.TryGetValue(path, out var t)) continue;
+            if (!byMethod.TryGetValue(path, out (string? Req, string? Resp, string? Notif) t))
+                throw new InvalidOperationException($"{iface}: method '{path}' has no x-method carrier in the schema.");
             string fn = MethodName(path);
             if (t.Notif is not null)
                 sb.AppendLine($"    ValueTask {fn}({t.Notif} notification, CancellationToken cancellationToken = default);");
             else if (t.Req is not null && t.Resp is not null)
                 sb.AppendLine($"    ValueTask<{t.Resp}> {fn}({t.Req} request, CancellationToken cancellationToken = default);");
+            else
+                throw new InvalidOperationException(
+                    $"{iface}: method '{path}' carrier is neither a notification nor a request/response pair (req={t.Req}, resp={t.Resp}, notif={t.Notif}).");
         }
         sb.AppendLine("    ValueTask<JsonElement> ExtMethodAsync(string method, JsonElement @params, CancellationToken cancellationToken = default);");
         sb.AppendLine("    ValueTask ExtNotificationAsync(string method, JsonElement @params, CancellationToken cancellationToken = default);");
@@ -460,7 +477,7 @@ void EmitUnionWithDefault(StringBuilder sb, string baseName, string discProp, Li
     EmitConstants(sb, "ClientMethods", clientMethods);
     EmitInterface(sb, "IAcpAgent", agentMethods);
     EmitInterface(sb, "IAcpClient", clientMethods);
-    File.WriteAllText(Path.Combine(outDir, "Methods.g.cs"), sb.ToString());
+    WriteGenerated(Path.Combine(outDir, "Methods.g.cs"), sb.ToString());
 }
 
 Console.WriteLine($"Generated 4 files in {outDir}");

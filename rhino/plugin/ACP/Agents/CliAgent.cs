@@ -233,10 +233,19 @@ internal abstract class CliAgent : IAgent
         proc.BeginErrorReadLine();
         DebugLog($"started pid {proc.Id}");
 
-        Proc = proc;
-        Stdin = proc.StandardInput;
-        Stdin.NewLine = "\n";   // stream-json input is newline-framed, not platform-framed
-        Started = true;
+        StreamWriter stdin = proc.StandardInput;
+        stdin.NewLine = "\n";   // stream-json input is newline-framed, not platform-framed
+
+        // Publish under Gate so a concurrent Cancel()->Kill() (UI thread) and the reader
+        // loop's ReferenceEquals(Proc, proc) guard observe the spawned process atomically;
+        // an unlocked publish leaves a window where Cancel sees a stale null Proc and orphans
+        // the CLI process tree.
+        lock (Gate)
+        {
+            Proc = proc;
+            Stdin = stdin;
+            Started = true;
+        }
         _ = Task.Run(() => ReadLoopAsync(proc));
         return Task.CompletedTask;
     }

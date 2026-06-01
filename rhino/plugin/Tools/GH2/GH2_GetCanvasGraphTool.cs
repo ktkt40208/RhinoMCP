@@ -61,7 +61,10 @@ public static class GH2_GetCanvasGraphTool
             }
             else if (obj is IParameter param)
             {
-                inputs = Array.Empty<InputInfo>();
+                // A top-level standalone param is itself a real wire destination
+                // (GH2_ConnectTool wires into dstParam.Inputs), so walk its own
+                // sources rather than dropping incoming wires.
+                inputs = new[] { MakeInput(doc, param, include_data, sample_size, wires, obj.InstanceId) };
                 outputs = new[] { MakeOutput(param, include_data, sample_size, displaySource: obj) };
             }
             else

@@ -64,31 +64,77 @@ internal sealed class JsonRpcEndpoint
         }
     }
 
+    // Input is raw stdout from an external agent CLI: the line-51 brace guard is first/last-char
+    // only, so a malformed-but-brace-wrapped frame can still fail JsonDocument.Parse or a
+    // Deserialize. Any such JsonException must stay contained to this one frame: it must never
+    // escape into RunAsync, where the finally would FailPending every in-flight request and kill
+    // the read loop. For a method+id frame we can reply with InvalidRequest; for everything else
+    // (we may not have an id) we skip the frame and keep reading.
     private async ValueTask DispatchAsync(string line, CancellationToken ct)
     {
-        using JsonDocument doc = JsonDocument.Parse(line);
-        JsonElement root = doc.RootElement;
-        bool hasId = root.TryGetProperty("id", out _);
-        bool hasMethod = root.TryGetProperty("method", out _);
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(line);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
 
-        if (hasMethod && hasId)
+        using (doc)
         {
-            JsonRpcRequest request = root.Deserialize<JsonRpcRequest>(AcpJson.Options)!;
-            await HandleRequestAsync(request, ct).ConfigureAwait(false);
-        }
-        else if (hasMethod)
-        {
-            JsonRpcNotification notification = root.Deserialize<JsonRpcNotification>(AcpJson.Options)!;
-            Func<JsonRpcNotification, CancellationToken, ValueTask>? handler =
-                NotificationHandlers.TryGetValue(notification.Method, out var h) ? h : DefaultNotificationHandler;
-            if (handler is not null)
-                await handler(notification, ct).ConfigureAwait(false);
-        }
-        else if (hasId)
-        {
-            JsonRpcResponse response = root.Deserialize<JsonRpcResponse>(AcpJson.Options)!;
-            if (Pending.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
-                tcs.TrySetResult(response);
+            JsonElement root = doc.RootElement;
+            bool hasId = root.TryGetProperty("id", out _);
+            bool hasMethod = root.TryGetProperty("method", out _);
+
+            if (hasMethod && hasId)
+            {
+                JsonRpcRequest request;
+                try
+                {
+                    request = root.Deserialize<JsonRpcRequest>(AcpJson.Options)!;
+                }
+                catch (JsonException ex)
+                {
+                    // Reply only if the id itself is well-formed (number/string); otherwise we have
+                    // nothing to correlate a response to, so skip the frame.
+                    if (TryReadId(root, out RequestId id))
+                        await SendAsync(Error(id, JsonRpcErrorCode.InvalidRequest, ex.Message), ct).ConfigureAwait(false);
+                    return;
+                }
+                await HandleRequestAsync(request, ct).ConfigureAwait(false);
+            }
+            else if (hasMethod)
+            {
+                JsonRpcNotification notification;
+                try
+                {
+                    notification = root.Deserialize<JsonRpcNotification>(AcpJson.Options)!;
+                }
+                catch (JsonException)
+                {
+                    return;
+                }
+                Func<JsonRpcNotification, CancellationToken, ValueTask>? handler =
+                    NotificationHandlers.TryGetValue(notification.Method, out var h) ? h : DefaultNotificationHandler;
+                if (handler is not null)
+                    await handler(notification, ct).ConfigureAwait(false);
+            }
+            else if (hasId)
+            {
+                JsonRpcResponse response;
+                try
+                {
+                    response = root.Deserialize<JsonRpcResponse>(AcpJson.Options)!;
+                }
+                catch (JsonException)
+                {
+                    return;
+                }
+                if (Pending.TryRemove(response.Id, out TaskCompletionSource<JsonRpcResponse>? tcs))
+                    tcs.TrySetResult(response);
+            }
         }
     }
 
@@ -136,6 +182,20 @@ internal sealed class JsonRpcEndpoint
 
     private static JsonRpcResponse Error(RequestId id, JsonRpcErrorCode code, string message) =>
         new() { Id = id, Error = new JsonRpcError { Code = (int)code, Message = message } };
+
+    private static bool TryReadId(JsonElement root, out RequestId id)
+    {
+        try
+        {
+            id = root.GetProperty("id").Deserialize<RequestId>(AcpJson.Options);
+            return id.IsValid;
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or OverflowException)
+        {
+            id = default;
+            return false;
+        }
+    }
 
     private void FailPending(Exception ex)
     {

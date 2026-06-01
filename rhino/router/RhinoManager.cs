@@ -85,7 +85,7 @@ public class RhinoManager(
     {
         if (existing.Status == SlotStatus.Ready) return existing;
 
-        var ready = store.WaitForReady(existing.SlotId, TimeSpan.FromSeconds(StartupTimeoutSeconds), ct);
+        var ready = await store.WaitForReadyAsync(existing.SlotId, TimeSpan.FromSeconds(StartupTimeoutSeconds), ct).ConfigureAwait(false);
         if (ready is null)
         {
             throw new TimeoutException(
@@ -180,12 +180,13 @@ public class RhinoManager(
             }
 
             var lead = await WaitForLeadAsync(version, slotId, ct).ConfigureAwait(false);
+            int leadPid = lead.Pid ?? throw new InvalidOperationException($"Ready lead slot '{lead.SlotId}' has no pid.");
             log.LogInformation("Mac: reusing Rhino {Version} (pid {Pid}) for slot '{Slot}'",
-                version, lead.Pid, slotId);
+                version, leadPid, slotId);
 
             var newPort = await control.SpawnListenerAsync(lead.Endpoint, ct).ConfigureAwait(false);
-            store.MarkReady(slotId, newPort, lead.Pid);
-            log.LogInformation("Slot '{Slot}' ready: pid {Pid} (shared), port {Port}", slotId, lead.Pid, newPort);
+            store.MarkReady(slotId, newPort, leadPid);
+            log.LogInformation("Slot '{Slot}' ready: pid {Pid} (shared), port {Port}", slotId, leadPid, newPort);
             return store.Get(slotId)!;
         }
         catch
@@ -220,17 +221,27 @@ public class RhinoManager(
             throw new AdoptedSlotCloseException(slotId);
         }
 
+        // A launching placeholder has no pid/port to act on; the leader/follower
+        // launch path deletes it on failure, but a close racing the launch just
+        // drops the placeholder so it doesn't linger until the reaper.
+        if (child.Pid is not { } pid)
+        {
+            log.LogInformation("Closing slot '{Slot}' while still launching; dropping placeholder.", slotId);
+            store.Delete(slotId);
+            return true;
+        }
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             // If siblings share this pid, close just our listener and leave Rhino running.
-            var sibling = store.FindSiblingByPid(slotId, child.Pid);
+            var sibling = store.FindSiblingByPid(slotId, pid);
             if (sibling is not null)
             {
                 log.LogInformation("Closing slot '{Slot}' listener on port {Port} (pid {Pid} shared with '{Sibling}')",
-                    slotId, child.Port, child.Pid, sibling.SlotId);
+                    slotId, child.Port, pid, sibling.SlotId);
                 try
                 {
-                    await control.CloseListenerAsync(sibling.Endpoint, child.Port, ct).ConfigureAwait(false);
+                    await control.CloseListenerAsync(sibling.Endpoint, child.Port!.Value, ct).ConfigureAwait(false);
                     store.Delete(slotId);
                     return true;
                 }
@@ -247,7 +258,7 @@ public class RhinoManager(
         // for the OS process to actually exit. SIGKILL is reserved for the
         // case where graceful quit doesn't land in time — it's reliable but
         // leaves the TCP listener alive briefly, which races ScanAnnouncements.
-        log.LogInformation("Closing slot '{Slot}' cooperatively (pid {Pid})", slotId, child.Pid);
+        log.LogInformation("Closing slot '{Slot}' cooperatively (pid {Pid})", slotId, pid);
         try
         {
             await control.QuitAppAsync(child.Endpoint, ct).ConfigureAwait(false);
@@ -257,27 +268,27 @@ public class RhinoManager(
             log.LogWarning(ex, "Quit-app control call for slot '{Slot}' failed; falling through to kill.", slotId);
         }
 
-        if (await WaitForProcessExitAsync(child.Pid, TimeSpan.FromSeconds(15), ct).ConfigureAwait(false))
+        if (await WaitForProcessExitAsync(pid, TimeSpan.FromSeconds(15), ct).ConfigureAwait(false))
         {
             store.Delete(slotId);
-            log.LogInformation("Slot '{Slot}' exited gracefully (pid {Pid})", slotId, child.Pid);
+            log.LogInformation("Slot '{Slot}' exited gracefully (pid {Pid})", slotId, pid);
             return true;
         }
 
-        log.LogWarning("Slot '{Slot}' did not exit within timeout; killing pid {Pid}", slotId, child.Pid);
+        log.LogWarning("Slot '{Slot}' did not exit within timeout; killing pid {Pid}", slotId, pid);
         store.Delete(slotId);
         try
         {
-            Process.GetProcessById(child.Pid).Kill(entireProcessTree: true);
+            Process.GetProcessById(pid).Kill(entireProcessTree: true);
         }
         catch (ArgumentException) { /* already exited */ }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "Failed to kill slot '{Slot}' (pid {Pid})", slotId, child.Pid);
+            log.LogWarning(ex, "Failed to kill slot '{Slot}' (pid {Pid})", slotId, pid);
         }
         // SIGKILL is async; wait for the OS to reap the pid so callers don't
         // observe a 'closed' slot whose process+listener are still around.
-        await WaitForProcessExitAsync(child.Pid, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+        await WaitForProcessExitAsync(pid, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
         return true;
     }
 
@@ -303,16 +314,16 @@ public class RhinoManager(
         {
             if (c.Adopted) { store.Delete(c.SlotId); continue; }
             store.Delete(c.SlotId);
-            if (c.Pid <= 0) continue;
-            if (!killed.Add(c.Pid)) continue;
+            if (c.Pid is not { } pid || pid <= 0) continue;
+            if (!killed.Add(pid)) continue;
             try
             {
-                Process.GetProcessById(c.Pid).Kill(entireProcessTree: true);
+                Process.GetProcessById(pid).Kill(entireProcessTree: true);
             }
             catch (ArgumentException) { /* already exited */ }
             catch (Exception ex)
             {
-                log.LogWarning(ex, "Failed to kill pid {Pid} during CloseAll", c.Pid);
+                log.LogWarning(ex, "Failed to kill pid {Pid} during CloseAll", pid);
             }
         }
     }
@@ -369,6 +380,18 @@ public class RhinoManager(
                     continue;
                 }
 
+                // Slots are keyed by version; GetOrCreateDefaultAsync matches on it. A
+                // version-less announcement could only be stored under a placeholder that
+                // matches nothing, occupying a name/pid/port while staying unroutable. Skip
+                // it at the boundary rather than adopting an unroutable slot.
+                if (ann.Version is not { } version)
+                {
+                    log.LogWarning("Announcement for pid {Pid} port {Port} has no Rhino version; skipping adoption",
+                        ann.Pid, ann.Port);
+                    TryDelete(file);
+                    continue;
+                }
+
                 if (!IsPortListening(ann.Port))
                 {
                     log.LogDebug("Announcement for pid {Pid} port {Port} is stale (no listener); discarding",
@@ -377,11 +400,11 @@ public class RhinoManager(
                     continue;
                 }
 
-                var slotId = store.AdoptIfNew(ann.Version ?? "?", ann.Port, ann.Pid, _routerPid);
+                var slotId = store.AdoptIfNew(version, ann.Port, ann.Pid, _routerPid);
                 if (slotId is not null)
                 {
                     log.LogInformation("Adopted user-started Rhino {Version} as slot '{Slot}' (pid {Pid}, port {Port})",
-                        ann.Version ?? "?", slotId, ann.Pid, ann.Port);
+                        version, slotId, ann.Pid, ann.Port);
                 }
                 TryDelete(file);
             }
@@ -403,8 +426,10 @@ public class RhinoManager(
     public bool IsAlive(ChildRhino c)
     {
         if (c.Status != SlotStatus.Ready) return true; // launching rows are pending, not dead
-        if (!IsProcessAlive(c.Pid)) return false;
-        if (!IsPortListening(c.Port)) return false;
+        if (c.Pid is not { } pid || c.Port is not { } port)
+            throw new InvalidOperationException($"Ready slot '{c.SlotId}' is missing pid/port.");
+        if (!IsProcessAlive(pid)) return false;
+        if (!IsPortListening(port)) return false;
         return true;
     }
 
@@ -553,13 +578,18 @@ public sealed class AdoptedSlotCloseException(string slotId)
 
 // `Adopted` slots are never killed by the router — the user started them.
 // `Status` is internal lifecycle state, kept off the JSON wire.
+// Port/Pid are null on a launching row (the placeholder INSERT omits them) and
+// only set once the slot is marked ready. Modelling them as int? keeps a
+// half-launched slot from materialising a lying "http://localhost:0" endpoint.
 public record ChildRhino(
     string SlotId,
-    int Port,
-    int Pid,
+    int? Port,
+    int? Pid,
     string Version,
     bool Adopted = false,
     [property: JsonIgnore] SlotStatus Status = SlotStatus.Ready)
 {
-    public string Endpoint => $"http://localhost:{Port}";
+    public string Endpoint => Port is { } port
+        ? $"http://localhost:{port}"
+        : throw new InvalidOperationException($"Slot '{SlotId}' has no port yet (status {Status}); its endpoint is not addressable.");
 }
