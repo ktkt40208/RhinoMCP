@@ -14,4 +14,6 @@ internal interface IAgent : IDisposable
     /// <summary>Cancels any currently running actions</summary>
     public void Cancel();
 
+    /// <summary>The live transcript for this agent, fed by its event stream.</summary>
+    public Conversation Conversation { get; }
 }

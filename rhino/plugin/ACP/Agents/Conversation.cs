@@ -13,12 +13,15 @@ internal enum TurnEventKind
 
 // Args/Result are empty for kinds that don't carry them; ToolUse holds the tool's input JSON in
 // Args and (once the matching tool_result arrives) its output in Result so a chip can expand both.
+// Id is the tool call id on a ToolUse event so its later result can be matched back to it; empty
+// for every other kind.
 internal sealed record TurnEvent(
     TurnEventKind Kind,
     string Text,
     DateTimeOffset At,
     string Args = "",
-    string Result = "");
+    string Result = "",
+    string Id = "");
 
 // Mutated only while it is the current turn; Complete() freezes it permanently.
 internal sealed class Turn
@@ -42,6 +45,27 @@ internal sealed class Turn
 
     internal void Add(TurnEvent ev) { lock (Sync) EventList.Add(ev); }
     internal void Complete() { lock (Sync) CompletedAt ??= DateTimeOffset.UtcNow; }
+
+    // Fold a tool's output into its originating ToolUse event (matched by id, most-recent first) so
+    // it surfaces in that chip's expander rather than as a stray bubble. A missing id is dropped,
+    // not turned into a new event.
+    internal void SetToolResult(string id, string result)
+    {
+        if (id.Length == 0)
+            return;
+        lock (Sync)
+        {
+            for (int i = EventList.Count - 1; i >= 0; i--)
+            {
+                TurnEvent ev = EventList[i];
+                if (ev.Kind == TurnEventKind.ToolUse && ev.Id == id)
+                {
+                    EventList[i] = ev with { Result = result };
+                    return;
+                }
+            }
+        }
+    }
 }
 
 // One lock guards the whole graph (shared with each Turn): reader thread writes, PromptAsync
@@ -93,10 +117,18 @@ internal sealed class Conversation
         return turn;
     }
 
-    public void Record(TurnEventKind kind, string text, string args = "", string result = "")
+    public void Record(TurnEventKind kind, string text, string args = "", string result = "", string id = "")
     {
         lock (Sync)
-            Current?.Add(new TurnEvent(kind, text, DateTimeOffset.UtcNow, args, result));
+            Current?.Add(new TurnEvent(kind, text, DateTimeOffset.UtcNow, args, result, id));
+        Changed?.Invoke();
+    }
+
+    // Attach a completed tool's output to its originating ToolUse event (see Turn.SetToolResult).
+    public void CompleteToolCall(string id, string result)
+    {
+        lock (Sync)
+            Current?.SetToolResult(id, result);
         Changed?.Invoke();
     }
 

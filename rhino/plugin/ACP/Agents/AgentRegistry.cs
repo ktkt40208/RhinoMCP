@@ -30,6 +30,7 @@ internal static class AgentRegistry
     [
         Builtin("claude", AgentAdapter.Claude, "claude"),
         Builtin("codex", AgentAdapter.Codex, "codex"),
+        Builtin("gemini", AgentAdapter.Gemini, "gemini"),
     ];
 
     private static AgentDefinition Builtin(string name, AgentAdapter adapter, string command) =>

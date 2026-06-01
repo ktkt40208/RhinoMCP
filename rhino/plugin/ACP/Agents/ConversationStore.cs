@@ -98,5 +98,5 @@ internal static class ConversationStore
     }
 
     private static TurnEventDto ToDto(TurnEvent ev) =>
-        new(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result);
+        new(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result, ev.Id);
 }

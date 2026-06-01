@@ -6,4 +6,5 @@ internal enum AgentAdapter
 {
     Claude,
     Codex,
+    Gemini,
 }

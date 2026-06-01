@@ -1,0 +1,57 @@
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using Acp;
+
+namespace RhMcp;
+
+// Spawns Gemini in its native ACP mode (`gemini --experimental-acp`) and returns a started
+// ClientSideConnection driving it. This is the proof that the rhino/acp library works against a
+// real ACP peer — no translator needed, since Gemini speaks ACP directly.
+internal static class GeminiConnection
+{
+    public static IAcpAgent Connect(AgentDefinition def, IAcpClient client, string cwd)
+    {
+        if (!TryResolveCommand(def.SearchPaths, out string path))
+            throw new FileNotFoundException("Gemini CLI not found. Install it (npm i -g @google/gemini-cli).");
+
+        ProcessStartInfo psi = new()
+        {
+            FileName = path,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = cwd,
+        };
+        psi.ArgumentList.Add("--experimental-acp");
+        foreach (string arg in def.ExtraArgs)
+            psi.ArgumentList.Add(arg);
+
+        Process proc = new() { StartInfo = psi };
+        proc.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+                RhinoApp.WriteLine($"[{def.Name}:err] {e.Data}");
+        };
+        proc.Start();
+        proc.BeginErrorReadLine();
+
+        ProcessStdioTransport transport = new(proc);
+        ClientSideConnection connection = new(_ => client, transport);
+        connection.Start();
+        return connection;
+    }
+
+    // Last existing candidate wins, matching CliAgent.TryResolveCommand: Rhino's launch PATH often
+    // lacks Homebrew/npm dirs, so we probe the definition's locations rather than relying on PATH.
+    private static bool TryResolveCommand(IReadOnlyList<string> searchPaths, out string path)
+    {
+        path = string.Empty;
+        foreach (string candidate in searchPaths)
+            if (File.Exists(candidate))
+                path = candidate;
+        return path.Length > 0;
+    }
+}

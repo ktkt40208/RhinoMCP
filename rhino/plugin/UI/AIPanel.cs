@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Eto.Drawing;
 using Eto.Forms;
@@ -26,19 +27,28 @@ public class AIPAnel : Panel
     private StackLayout TranscriptStack { get; } = new()
     {
         Spacing = 8,
-        Padding = new Padding(4),
+        Padding = new Padding(SideMargin, 4),
         HorizontalContentAlignment = HorizontalAlignment.Stretch,   // rows fill width so bubbles can bias left/right
     };
     private StackLayout AttachmentStrip { get; } = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
 
-    // TODO : Should be a GridView with custom Cells
     private Scrollable TranscriptScroll { get; } = new() { ExpandContentWidth = true };
 
-    // An Eto wrapping label reports its full single-line width, so the Scrollable grows to fit the
-    // longest line (horizontal scroll) instead of wrapping. The cure is an explicit width derived
-    // from the viewport: BubbleBodies tracks the current render's labels, re-capped on resize.
-    private List<Label> BubbleBodies { get; } = new();
-    private int BubbleBodyWidth { get; set; }
+    // Each MessageBubble sizes its own wrapped width/height, but must be re-pinned to the viewport
+    // on resize; tool-chip detail labels likewise wrap to the viewport so long JSON never forces a
+    // horizontal scroll. LastBudget short-circuits the resize handler when the width budget is
+    // unchanged (Rerender resets it to force a re-apply over the freshly built controls).
+    private List<MessageBubble> Bubbles { get; } = new();
+    private List<Label> ToolDetails { get; } = new();
+    private Font MeasureFont { get; } = SystemFonts.Default();
+    private int LastBudget { get; set; } = -1;
+
+    private const int SideMargin = 10;        // left/right breathing room around every row
+    private const int ScrollbarGuard = 18;    // reserve the vertical scrollbar so content never x-scrolls
+    private const int MaxBubbleHeight = 320;  // oversized messages cap here and scroll internally
+
+    private static Image? CopyIconBacking { get; set; }
+    private static bool CopyIconLoaded { get; set; }
 
     private List<Attachment> Pending { get; } = new();
 
@@ -58,6 +68,10 @@ public class AIPAnel : Panel
     // genuine user pick drives SetActive/Resubscribe/Rerender.
     private bool Populating { get; set; }
 
+    // The last agent the user successfully selected; picking a disabled / not-found entry snaps the
+    // dropdown back to this since Eto can't disable individual dropdown items.
+    private string LastAgentKey { get; set; } = string.Empty;
+
     public AIPAnel()
         : this(Rhino.RhinoDoc.ActiveDoc is { } doc ? doc.RuntimeSerialNumber : 0u)
     {
@@ -75,18 +89,20 @@ public class AIPAnel : Panel
         RecentPicker.SelectedValueChanged += OnRecentPicked;
         SendButton.Click += (_, _) => OnSendOrStop();
 
-        Button settingsGear = new() { Text = "⚙", ToolTip = "AI Settings", Width = 32 };
+        Button settingsGear = new() { Text = "⚙", ToolTip = "AI Settings" };
         settingsGear.Click += (_, _) => OpenSettings();
 
         Button newConvo = new() { Text = "New", ToolTip = "New conversation" };
         newConvo.Click += (_, _) => OnNewConversation();
 
-        Button attachButton = new() { Text = "+", ToolTip = "Attach a file", Width = 32 };
+        Button attachButton = new() { Text = "+", ToolTip = "Attach a file" };
         attachButton.Click += (_, _) => OnPickFile();
 
         PromptBox.KeyDown += OnPromptKeyDown;
 
-        StackLayout header = new()
+        // Two rows so the agent picker gets the full panel width instead of fighting the model
+        // label / recents / New for space on a narrow docked panel.
+        StackLayout headerTop = new()
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
@@ -95,17 +111,29 @@ public class AIPAnel : Panel
             {
                 new StackLayoutItem(settingsGear, false),
                 new StackLayoutItem(AgentPicker, true),
-                new StackLayoutItem(ModelLabel, false),
-                new StackLayoutItem(RecentPicker, false),
                 new StackLayoutItem(newConvo, false),
             },
         };
 
+        StackLayout headerSub = new()
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Items =
+            {
+                new StackLayoutItem(ModelLabel, false),
+                new StackLayoutItem(RecentPicker, true),
+            },
+        };
+
+        // Center (not stretch) so the small attach/send buttons keep their natural height instead of
+        // growing as tall as the multi-line prompt box (which read as oversized square boxes).
         StackLayout promptRow = new()
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Center,
             Items =
             {
                 attachButton,
@@ -119,7 +147,8 @@ public class AIPAnel : Panel
             Spacing = new Size(0, 8),
             Rows =
             {
-                new TableRow(header),
+                new TableRow(headerTop),
+                new TableRow(headerSub),
                 new TableRow(TranscriptScroll) { ScaleHeight = true },
                 new TableRow(AttachmentStrip),
                 new TableRow(promptRow),
@@ -168,8 +197,8 @@ public class AIPAnel : Panel
             IReadOnlyList<ResolvedAgent> chain = AgentRegistry.Chain;
             foreach (ResolvedAgent r in chain)
             {
-                string label = r.Available ? r.Definition.Name : $"{r.Definition.Name} (not found)";
-                AgentPicker.Items.Add(new ListItem { Text = label, Key = r.Definition.Name });
+                string suffix = !r.Definition.Enabled ? " (disabled)" : !r.Available ? " (not found)" : string.Empty;
+                AgentPicker.Items.Add(new ListItem { Text = r.Definition.Name + suffix, Key = r.Definition.Name });
             }
 
             // Reflect the resolved active agent without pinning: only a genuine user pick should
@@ -177,7 +206,7 @@ public class AIPAnel : Panel
             // stays authoritative as availability changes.
             if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent active))
                 AgentPicker.SelectedKey = active.Name;
-            else if (chain.FirstOrDefault(static r => r.Available) is { } available)
+            else if (chain.FirstOrDefault(static r => r.Definition.Enabled && r.Available) is { } available)
                 AgentPicker.SelectedKey = available.Definition.Name;
             else if (AgentPicker.Items.Count > 0)
                 AgentPicker.SelectedIndex = 0;
@@ -187,6 +216,7 @@ public class AIPAnel : Panel
             Populating = false;
         }
 
+        LastAgentKey = AgentPicker.SelectedKey ?? string.Empty;
         UpdateModelLabel();
     }
 
@@ -232,6 +262,18 @@ public class AIPAnel : Panel
         string? name = AgentPicker.SelectedKey;
         if (string.IsNullOrEmpty(name) || !TryDoc(out RhinoDoc doc))
             return;
+
+        // Disabled / not-installed agents are listed for context but can't be driven, and Eto has no
+        // per-item disable — so snap the selection back to the last usable pick instead.
+        if (AgentRegistry.Chain.FirstOrDefault(r => r.Definition.Name == name) is not { Definition.Enabled: true, Available: true })
+        {
+            Populating = true;
+            try { AgentPicker.SelectedKey = LastAgentKey; }
+            finally { Populating = false; }
+            return;
+        }
+
+        LastAgentKey = name;
         Reviewing = null;   // switching agents returns to a live view
         AgentHost.SetActive(doc, name);
         UpdateModelLabel();
@@ -284,9 +326,9 @@ public class AIPAnel : Panel
 
     private bool TryActiveConversation(out Conversation convo)
     {
-        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent agent) && agent is CliAgent cli)
+        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent agent))
         {
-            convo = cli.Conversation;
+            convo = agent.Conversation;
             return true;
         }
         convo = default!;
@@ -311,8 +353,7 @@ public class AIPAnel : Panel
             return;
         }
 
-        TranscriptStack.Items.Clear();
-        BubbleBodies.Clear();
+        ResetTranscript();
 
         bool anyAgent = AgentRegistry.Chain.Any(static r => r.Available);
         if (!anyAgent)
@@ -324,27 +365,67 @@ public class AIPAnel : Panel
 
         if (!TryActiveConversation(out Conversation convo))
         {
-            TranscriptStack.Items.Add(Bubble("Start a conversation with the active agent.", false));
+            RenderItem(new TranscriptItem(TranscriptRole.Agent, "Start a conversation with the active agent."));
+            ApplyBubbleWidths();
             SyncSendButton(false);
             return;
         }
 
-        foreach (TurnEvent ev in convo.Lifecycle)
-            TranscriptStack.Items.Add(SystemLine(ev.Text));
-
-        bool running = false;
-        foreach (Turn turn in convo.Turns)
-        {
-            TranscriptStack.Items.Add(Bubble(turn.Prompt, true));
-            AppendTurnEvents(turn);
-            running = !turn.Completed;
-        }
+        TranscriptViewModel vm = TranscriptViewModel.FromLive(convo);
+        foreach (TranscriptItem item in vm.Items)
+            RenderItem(item);
 
         if (convo.TryGetPendingQuestion(out PendingQuestion question))
             TranscriptStack.Items.Add(QuestionCard(question));
 
-        SyncSendButton(running);
+        SyncSendButton(vm.Running);
+        ApplyBubbleWidths();
         ScrollToBottom();
+    }
+
+    // Clear the rendered rows and per-render tracking, and force the next ApplyBubbleWidths to
+    // re-pin widths over the freshly built controls even when the viewport width is unchanged.
+    private void ResetTranscript()
+    {
+        TranscriptStack.Items.Clear();
+        Bubbles.Clear();
+        ToolDetails.Clear();
+        LastBudget = -1;
+    }
+
+    private void RenderItem(TranscriptItem item)
+    {
+        Control control = item.Role switch
+        {
+            TranscriptRole.System => SystemLine(item.Text),
+            TranscriptRole.Tool => ToolChip(item),
+            _ => BubbleRow(item),
+        };
+        TranscriptStack.Items.Add(control);
+    }
+
+    // A bubble biased left (agent) or right (user) by a stretchable spacer on the open side; the
+    // transcript's side padding plus the spacer give every row left/right breathing room.
+    private Control BubbleRow(TranscriptItem item)
+    {
+        bool user = item.Role == TranscriptRole.User;
+        MessageBubble bubble = new(item.Text, user, MeasureFont, MaxBubbleHeight, CopyIcon());
+        Bubbles.Add(bubble);
+
+        StackLayout row = new() { Orientation = Orientation.Horizontal };
+        StackLayoutItem flex = new(null, true);
+        StackLayoutItem fixedBubble = new(bubble, false);
+        if (user)
+        {
+            row.Items.Add(flex);
+            row.Items.Add(fixedBubble);
+        }
+        else
+        {
+            row.Items.Add(fixedBubble);
+            row.Items.Add(flex);
+        }
+        return row;
     }
 
     // Inline ask_user affordance rendered at the bottom of the transcript. Click handlers run on
@@ -463,90 +544,21 @@ public class AIPAnel : Panel
         if (!Loaded)
             return;
 
-        TranscriptStack.Items.Clear();
-        BubbleBodies.Clear();
+        ResetTranscript();
 
         Button back = new() { Text = "← Back to live" };
         back.Click += (_, _) => ExitReview();
         TranscriptStack.Items.Add(back);
         TranscriptStack.Items.Add(SystemLine($"{convo.DocTitle} · {convo.AgentName} (read-only)"));
 
-        foreach (TurnEventDto ev in convo.Lifecycle)
-            TranscriptStack.Items.Add(SystemLine(ev.Text));
-
-        foreach (TurnDto turn in convo.Turns)
-        {
-            TranscriptStack.Items.Add(Bubble(turn.Prompt, true));
-            AppendDtoEvents(turn.Events);
-        }
+        TranscriptViewModel vm = TranscriptViewModel.FromReview(convo);
+        foreach (TranscriptItem item in vm.Items)
+            RenderItem(item);
 
         SyncSendButton(false);
         SendButton.Enabled = false;
+        ApplyBubbleWidths();
         ScrollToBottom();
-    }
-
-    private void AppendDtoEvents(IReadOnlyList<TurnEventDto> events)
-    {
-        System.Text.StringBuilder assistant = new();
-        void FlushAssistant()
-        {
-            if (assistant.Length == 0)
-                return;
-            TranscriptStack.Items.Add(Bubble(assistant.ToString(), false));
-            assistant.Clear();
-        }
-
-        foreach (TurnEventDto ev in events)
-        {
-            switch (ev.Kind)
-            {
-                case TurnEventKind.AssistantText:
-                    assistant.Append(ev.Text);
-                    break;
-                case TurnEventKind.ToolUse:
-                    FlushAssistant();
-                    TranscriptStack.Items.Add(ToolChip(new TurnEvent(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result)));
-                    break;
-                case TurnEventKind.Result:
-                    FlushAssistant();
-                    if (!string.IsNullOrWhiteSpace(ev.Text))
-                        TranscriptStack.Items.Add(Bubble(ev.Text, false));
-                    break;
-            }
-        }
-        FlushAssistant();
-    }
-
-    private void AppendTurnEvents(Turn turn)
-    {
-        System.Text.StringBuilder assistant = new();
-        void FlushAssistant()
-        {
-            if (assistant.Length == 0)
-                return;
-            TranscriptStack.Items.Add(Bubble(assistant.ToString(), false));
-            assistant.Clear();
-        }
-
-        foreach (TurnEvent ev in turn.Events)
-        {
-            switch (ev.Kind)
-            {
-                case TurnEventKind.AssistantText:
-                    assistant.Append(ev.Text);
-                    break;
-                case TurnEventKind.ToolUse:
-                    FlushAssistant();
-                    TranscriptStack.Items.Add(ToolChip(ev));
-                    break;
-                case TurnEventKind.Result:
-                    FlushAssistant();
-                    if (!string.IsNullOrWhiteSpace(ev.Text))
-                        TranscriptStack.Items.Add(Bubble(ev.Text, false));
-                    break;
-            }
-        }
-        FlushAssistant();
     }
 
     private static Control SystemLine(string text) => new Label
@@ -557,44 +569,15 @@ public class AIPAnel : Panel
         Font = SystemFonts.Default(7),
     };
 
-    private static Control Bubble(string text, bool user)
+    // Compact one-line chip; click toggles an expander showing the tool's args + result. The detail
+    // label is tracked so ApplyBubbleWidths can wrap it to the viewport (long JSON otherwise widens
+    // the transcript and forces a horizontal scroll).
+    private Control ToolChip(TranscriptItem item)
     {
-        TextBox body = new()
-        {
-            Text = text,
-            ShowBorder = false,
-            BackgroundColor = Colors.Transparent,
-            AutoSelectMode = AutoSelectMode.Always,
-            ReadOnly = true,
-            TextAlignment = user ? TextAlignment.Right : TextAlignment.Left,
-        };
-        Panel inner = new()
-        {
-            Padding = new Padding(8, 6),
-            BackgroundColor = user ? Color.FromArgb(0x33, 0x66, 0xCC) : SystemColors.ControlBackground,
-            Content = body,
-        };
-        if (user)
-            body.TextColor = Colors.White;
-
-        return new StackLayout
-        {
-            Orientation = Orientation.Horizontal,
-            Items =
-            {
-                user ? new StackLayoutItem(new Panel() { Size = new Size(12, 1)}, false) : new StackLayoutItem(inner, true),
-                user ? new StackLayoutItem(inner, true) : new StackLayoutItem(new Panel() { Size = new Size(12, 1)}, false),
-            },
-        };
-    }
-
-    // Compact one-line chip; click toggles an expander showing the tool's args + result.
-    private static Control ToolChip(TurnEvent ev)
-    {
-        string detail = BuildToolDetail(ev);
+        string detail = BuildToolDetail(item.ToolArgs, item.ToolResult);
         Label headerLabel = new()
         {
-            Text = $"⚙ {ev.Text}",
+            Text = $"⚙ {item.Text}",
             Font = SystemFonts.Default(8),
             TextColor = SystemColors.ControlText,
         };
@@ -602,33 +585,65 @@ public class AIPAnel : Panel
         if (detail.Length == 0)
             return new Panel { Padding = new Padding(6, 3), Content = headerLabel };
 
+        Label detailLabel = new()
+        {
+            Text = detail,
+            Wrap = WrapMode.Word,
+            Font = SystemFonts.Default(8),
+            TextColor = SystemColors.DisabledText,
+        };
+        ToolDetails.Add(detailLabel);
+
         Expander expander = new()
         {
             Header = headerLabel,
             Expanded = false,
-            Content = new Label
-            {
-                Text = detail,
-                Wrap = WrapMode.Word,
-                Font = SystemFonts.Default(8),
-                TextColor = SystemColors.DisabledText,
-            },
+            Content = detailLabel,
         };
         return new Panel { Padding = new Padding(6, 3), Content = expander };
     }
 
-    private static string BuildToolDetail(TurnEvent ev)
+    private static string BuildToolDetail(string args, string result)
     {
         System.Text.StringBuilder sb = new();
-        if (!string.IsNullOrWhiteSpace(ev.Args))
-            sb.Append("args: ").Append(ev.Args);
-        if (!string.IsNullOrWhiteSpace(ev.Result))
+        if (!string.IsNullOrWhiteSpace(args))
+            sb.Append("args: ").Append(args);
+        if (!string.IsNullOrWhiteSpace(result))
         {
             if (sb.Length > 0)
                 sb.AppendLine().AppendLine();
-            sb.Append("result: ").Append(ev.Result);
+            sb.Append("result: ").Append(result);
         }
         return sb.ToString();
+    }
+
+    // The embedded copy.svg rendered once to an Eto bitmap (via Rhino's SVG rasterizer, dark-mode
+    // aware) and shared across every bubble's copy button. Null falls back to a text "Copy" button.
+    private static Image? CopyIcon()
+    {
+        if (CopyIconLoaded)
+            return CopyIconBacking;
+        CopyIconLoaded = true;
+
+        try
+        {
+            Assembly assembly = typeof(AIPAnel).Assembly;
+            using Stream? stream = assembly.GetManifestResourceStream("RhMcp.copy.svg");
+            if (stream is null)
+                return CopyIconBacking;
+
+            using StreamReader reader = new(stream);
+            string svg = reader.ReadToEnd();
+            using System.Drawing.Bitmap rendered = Rhino.UI.DrawingUtilities.BitmapFromSvg(svg, 14, 14, adjustForDarkMode: true);
+            using MemoryStream png = new();
+            rendered.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+            CopyIconBacking = new Bitmap(png.ToArray());
+        }
+        catch
+        {
+            CopyIconBacking = null;
+        }
+        return CopyIconBacking;
     }
 
     private void ShowNoAgentState()
@@ -667,6 +682,25 @@ public class AIPAnel : Panel
         if (Loaded)
             TranscriptScroll.ScrollPosition = new Point(0, TranscriptStack.Height);
     });
+
+    // The width budget every row wraps to: the viewport minus the transcript's side padding and a
+    // reserve for the vertical scrollbar, so nothing reports a width wider than the viewport (which
+    // would otherwise show a horizontal scrollbar). Re-runs on resize; a no-op when width is stable.
+    private void ApplyBubbleWidths()
+    {
+        int viewport = TranscriptScroll.ClientSize.Width;
+        if (viewport <= 0)
+            return;
+        int budget = Math.Max(80, viewport - 2 * SideMargin - ScrollbarGuard);
+        if (budget == LastBudget)
+            return;
+        LastBudget = budget;
+
+        foreach (MessageBubble bubble in Bubbles)
+            bubble.Apply(budget);
+        foreach (Label detail in ToolDetails)
+            detail.Width = budget;
+    }
 
     private void OnPromptKeyDown(object? sender, KeyEventArgs e)
     {
@@ -736,9 +770,15 @@ public class AIPAnel : Panel
             PersistConversationHook(convo);
 
         // Drop the pooled agent so the next prompt rebuilds it with a fresh session id +
-        // Conversation. Disposal also kills any in-flight process.
+        // Conversation. Disposal also kills any in-flight process. Stop() also forgets the pinned
+        // active agent, so re-pin the dropdown's selection — otherwise New silently snaps back to
+        // the configured default while the picker still shows the old choice.
         if (TryDoc(out RhinoDoc doc))
+        {
             AgentHost.Stop(doc);
+            if (LastAgentKey.Length > 0)
+                AgentHost.SetActive(doc, LastAgentKey);
+        }
 
         Pending.Clear();
         RefreshAttachmentStrip();

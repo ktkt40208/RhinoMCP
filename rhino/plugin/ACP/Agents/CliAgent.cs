@@ -34,7 +34,7 @@ internal abstract class CliAgent : IAgent
 
     // In-memory transcript of this agent's turns for this Rhino session. The read hook
     // for a future panel/export; not yet surfaced on IAgent.
-    internal Conversation Conversation { get; }
+    public Conversation Conversation { get; }
 
     protected CliAgent(AgentDefinition def, string docTitle)
     {
@@ -56,20 +56,9 @@ internal abstract class CliAgent : IAgent
             psi.ArgumentList.Add(arg);
     }
 
-    // The built-in AskUserQuestion needs an interactive frontend we don't have in headless
-    // stdio mode, so it auto-cancels; steer every agent to the Rhino MCP tool that renders on
-    // the command line instead. Subclasses inject this through their CLI's system-prompt flag.
-    protected static string AskUserSteer =>
-        "To ask the user a question or have them choose between options, always call the "
-        + $"mcp__{RouterMcpConfig.ServerName}__ask_user tool. Never use the built-in AskUserQuestion "
-        + "tool — it cannot be displayed in this environment and will be cancelled.";
-
-    // The full system prompt sent at launch: the always-on AskUserSteer plus this agent's own
-    // SystemPrompt. AskUserSteer is never dropped, so the steering survives custom prompts.
-    protected string ComposedSystemPrompt =>
-        Definition.SystemPrompt.Length > 0
-            ? AskUserSteer + "\n\n" + Definition.SystemPrompt
-            : AskUserSteer;
+    // The full system prompt sent at launch (the shared ask_user steer plus this agent's own
+    // SystemPrompt); subclasses inject it through their CLI's system-prompt flag.
+    protected string ComposedSystemPrompt => AgentPrompts.Compose(Definition.SystemPrompt);
 
     // Fail-soft parse of AISettings.ExtraMcpServersJson down to its inner `mcpServers` object,
     // detached (DeepClone) so callers can reparent the children into their own config. Runs inside

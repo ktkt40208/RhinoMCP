@@ -12,9 +12,14 @@ namespace Acp;
 public abstract class AcpConnection : IDisposable
 {
     private protected JsonRpcEndpoint Endpoint { get; }
+    private IAcpTransport Transport { get; }
     private CancellationTokenSource Cts { get; } = new();
 
-    private protected AcpConnection(IAcpTransport transport) => Endpoint = new JsonRpcEndpoint(transport);
+    private protected AcpConnection(IAcpTransport transport)
+    {
+        Transport = transport;
+        Endpoint = new JsonRpcEndpoint(transport);
+    }
 
     /// <summary>Starts the background read loop. Call once after construction.</summary>
     public void Start() => _ = Task.Run(() => Endpoint.RunAsync(Cts.Token));
@@ -59,6 +64,7 @@ public abstract class AcpConnection : IDisposable
     public void Dispose()
     {
         Cts.Cancel();
+        Transport.Dispose();
         Cts.Dispose();
         GC.SuppressFinalize(this);
     }

@@ -30,7 +30,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../acp/Acp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="../../art/logo.svg" LogicalName="RhMcp.logo.svg" />
+    <EmbeddedResource Include="../../art/copy.svg" LogicalName="RhMcp.copy.svg" />
   </ItemGroup>
 
   <PropertyGroup>

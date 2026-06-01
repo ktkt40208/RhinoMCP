@@ -14,7 +14,6 @@ internal sealed class AISettingsDialog : Dialog
     private TextBox ModelBox { get; } = new();
     private TextArea ExtraArgsBox { get; } = new() { Wrap = false, Height = 50 };
     private TextArea SystemPromptBox { get; } = new() { Wrap = true, Height = 70 };
-    private CheckBox EnabledBox { get; } = new() { Text = "Enabled" };
 
     private Button RemoveButton { get; } = new() { Text = "Remove" };
     private Button UpButton { get; } = new() { Text = "Up" };
@@ -24,7 +23,12 @@ internal sealed class AISettingsDialog : Dialog
     private TextArea McpJsonBox { get; } = new() { Wrap = false, Font = Fonts.Monospace(11) };
     private Label McpErrorLabel { get; } = new() { TextColor = Colors.Red, Visible = false };
 
-    private List<CheckBox> ToolBoxes { get; } = [];
+    // Leaf tool rows in the Tools tree, kept flat so Commit can read each checkbox back
+    // without re-walking the grouped tree.
+    private List<ToolNode> ToolLeaves { get; } = [];
+
+    private static JsonSerializerOptions IndentedJson { get; } = new() { WriteIndented = true };
+    private const string EmptyMcpJson = "{\n  \"mcpServers\": {}\n}";
 
     // Suppresses the editor->row write-back while we are programmatically loading
     // the editor from a freshly selected row.
@@ -34,8 +38,9 @@ internal sealed class AISettingsDialog : Dialog
     {
         Title = "AI Settings";
         Padding = new Padding(12);
-        Size = new Size(620, 520);
-        MinimumSize = new Size(480, 380);
+        Size = new Size(720, 680);
+        MinimumSize = new Size(560, 440);
+        Resizable = true;
 
         SeedRows();
 
@@ -111,9 +116,12 @@ internal sealed class AISettingsDialog : Dialog
         AgentGrid.Columns.Add(new GridColumn
         {
             HeaderText = "On",
-            DataCell = new TextBoxCell { Binding = Binding.Property((AgentRow r) => r.EnabledGlyph) },
-            Editable = false,
-            Width = 40,
+            DataCell = new CheckBoxCell
+            {
+                Binding = Binding.Delegate<AgentRow, bool?>(r => r.Enabled, (r, v) => r.Enabled = v == true),
+            },
+            Editable = true,
+            Width = 44,
         });
         AgentGrid.Columns.Add(new GridColumn
         {
@@ -150,12 +158,6 @@ internal sealed class AISettingsDialog : Dialog
         ModelBox.TextChanged += (_, _) => WriteEditor(row => row.Model = ModelBox.Text);
         ExtraArgsBox.TextChanged += (_, _) => WriteEditor(row => row.ExtraArgsText = ExtraArgsBox.Text);
         SystemPromptBox.TextChanged += (_, _) => WriteEditor(row => row.SystemPrompt = SystemPromptBox.Text);
-        EnabledBox.CheckedChanged += (_, _) =>
-            WriteEditor(row =>
-            {
-                row.Enabled = EnabledBox.Checked == true;
-                ReloadGrid();
-            });
 
         TableLayout editor = new()
         {
@@ -166,7 +168,6 @@ internal sealed class AISettingsDialog : Dialog
                 LabeledRow("Model:", ModelBox),
                 LabeledRow("Extra args (one per line):", ExtraArgsBox),
                 LabeledRow("Default prompt:", SystemPromptBox),
-                new TableRow(new TableCell(), new TableCell(EnabledBox)),
             },
         };
 
@@ -205,7 +206,6 @@ internal sealed class AISettingsDialog : Dialog
                 ModelBox.Text = row.Model;
                 ExtraArgsBox.Text = row.ExtraArgsText;
                 SystemPromptBox.Text = row.SystemPrompt;
-                EnabledBox.Checked = row.Enabled;
                 EnableEditor(true);
                 RemoveButton.Enabled = !row.IsBuiltin;
             }
@@ -215,7 +215,6 @@ internal sealed class AISettingsDialog : Dialog
                 ModelBox.Text = string.Empty;
                 ExtraArgsBox.Text = string.Empty;
                 SystemPromptBox.Text = string.Empty;
-                EnabledBox.Checked = false;
                 EnableEditor(false);
                 RemoveButton.Enabled = false;
             }
@@ -229,7 +228,6 @@ internal sealed class AISettingsDialog : Dialog
         ModelBox.Enabled = enabled;
         ExtraArgsBox.Enabled = enabled;
         SystemPromptBox.Enabled = enabled;
-        EnabledBox.Enabled = enabled;
         UpButton.Enabled = enabled;
         DownButton.Enabled = enabled;
         SetDefaultButton.Enabled = enabled;
@@ -382,13 +380,12 @@ internal sealed class AISettingsDialog : Dialog
 
     private Control McpServersTab()
     {
-        McpJsonBox.Text = AISettings.ExtraMcpServersJson;
+        McpJsonBox.Text = PrettyJson(AISettings.ExtraMcpServersJson);
 
         Label help = new()
         {
             Wrap = WrapMode.Word,
-            Text = "External MCP servers merged into each agent's config beside the built-in \"rhino\" "
-                + "server. Shape: {\"mcpServers\": { \"<name>\": { \"command\": \"...\", \"args\": [...] } }}.",
+            Text = "Extra MCP servers merged into every agent alongside the built-in \"rhino\" server.",
             TextColor = Colors.Gray,
         };
 
@@ -407,21 +404,54 @@ internal sealed class AISettingsDialog : Dialog
 
     private Control ToolsTab()
     {
-        StackLayout list = new() { Orientation = Orientation.Vertical, Spacing = 2, Padding = new Padding(8) };
-
         HashSet<string> disabled = new(AISettings.DisabledTools, StringComparer.OrdinalIgnoreCase);
-        foreach (string toolName in ScanToolNames())
+
+        TreeGridItemCollection roots = [];
+        foreach (IGrouping<string, ToolInfo> group in ScanTools()
+                     .GroupBy(t => t.Category)
+                     .OrderBy(g => CategoryOrder(g.Key)))
         {
-            CheckBox box = new() { Text = toolName, Checked = !disabled.Contains(toolName) };
-            ToolBoxes.Add(box);
-            list.Items.Add(box);
+            ToolNode groupNode = new(group.Key) { Expanded = true };
+            foreach (ToolInfo tool in group.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase))
+            {
+                ToolNode leaf = new(tool.Name, !disabled.Contains(tool.Name), tool.Title, tool.Description)
+                {
+                    Parent = groupNode,
+                };
+                groupNode.Children.Add(leaf);
+                ToolLeaves.Add(leaf);
+            }
+            SyncGroupState(groupNode);
+            roots.Add(groupNode);
         }
+
+        TreeGridView tree = new() { ShowHeader = true, DataStore = roots };
+        tree.Columns.Add(new GridColumn { HeaderText = "On", DataCell = new CheckBoxCell(0), Editable = true, Width = 44 });
+        tree.Columns.Add(new GridColumn { HeaderText = "Tool", DataCell = new TextBoxCell(1), Width = 210 });
+        tree.Columns.Add(new GridColumn { HeaderText = "Description", DataCell = new TextBoxCell(2), Width = 380 });
+        tree.CellEdited += (_, e) =>
+        {
+            if (e.Column != 0 || e.Item is not ToolNode node)
+                return;
+            if (node.IsGroup)
+            {
+                bool on = node.GetValue(0) is true;
+                foreach (ToolNode child in node.Children.OfType<ToolNode>())
+                    child.SetValue(0, on);
+                tree.ReloadItem(node);
+            }
+            else if (node.Parent is ToolNode group)
+            {
+                SyncGroupState(group);
+                tree.ReloadItem(group);
+            }
+        };
 
         Label help = new()
         {
             Wrap = WrapMode.Word,
-            Text = "All tools are visible to in-Rhino agents by default. Unchecking a tool hides it "
-                + "from in-Rhino agents only; external clients still see every tool.",
+            Text = "Tools the built-in \"rhino\" server exposes, grouped by behaviour. Unchecking a tool "
+                + "hides it from in-Rhino agents only; external clients still see every tool.",
             TextColor = Colors.Gray,
         };
 
@@ -432,21 +462,37 @@ internal sealed class AISettingsDialog : Dialog
             Rows =
             {
                 new TableRow(help),
-                new TableRow(new Scrollable { Content = list }) { ScaleHeight = true },
+                new TableRow(tree) { ScaleHeight = true },
             },
         };
     }
 
-    // Name-only mirror of ToolRegistry.Scan: iterate [McpServerToolType] classes and read each
-    // [McpServerTool] method's name, without instantiating tools or needing an IServiceProvider
-    // (Scan does the latter to build full ToolHandlers/schemas, which we must not do here).
-    // Router-internal tools (leading underscore) are excluded so they can't be accidentally hidden.
-    private static IReadOnlyList<string> ScanToolNames()
+    private static int CategoryOrder(string category) => category switch
+    {
+        "Read-only" => 0,
+        "Modify" => 1,
+        "Destructive" => 2,
+        _ => 3,
+    };
+
+    // A group checkbox is checked only when every tool under it is on; toggling it cascades to all
+    // children. Mixed groups read as unchecked (no tri-state) to keep the model free of nulls.
+    private static void SyncGroupState(ToolNode group)
+    {
+        List<ToolNode> children = group.Children.OfType<ToolNode>().ToList();
+        bool allOn = children.Count > 0 && children.All(c => c.GetValue(0) is true);
+        group.SetValue(0, allOn);
+    }
+
+    // Mirror of ToolRegistry.Scan that reads name/title/description/behaviour without instantiating
+    // tools or needing an IServiceProvider (Scan does the latter to build full schemas, which we must
+    // not do here). Router-internal tools (leading underscore) are excluded so they can't be hidden.
+    private static IReadOnlyList<ToolInfo> ScanTools()
     {
         const BindingFlags flags =
             BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
-        List<string> names = [];
+        List<ToolInfo> tools = [];
         Assembly assembly = typeof(McpSerializer).Assembly;
         foreach (Type type in SafeGetTypes(assembly))
         {
@@ -461,12 +507,15 @@ internal sealed class AISettingsDialog : Dialog
                 string name = toolAttr.Name ?? method.Name;
                 if (name.StartsWith('_'))
                     continue;
-                names.Add(name);
+
+                string title = string.IsNullOrWhiteSpace(toolAttr.Title) ? name : toolAttr.Title!;
+                string description = method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
+                string category = toolAttr.ReadOnly ? "Read-only" : toolAttr.Destructive ? "Destructive" : "Modify";
+                tools.Add(new ToolInfo(name, title, description, category));
             }
         }
 
-        names.Sort(StringComparer.OrdinalIgnoreCase);
-        return names;
+        return tools;
     }
 
     private static IEnumerable<Type> SafeGetTypes(Assembly assembly)
@@ -493,12 +542,11 @@ internal sealed class AISettingsDialog : Dialog
 
         AISettings.ExtraMcpServersJson = normalizedJson;
 
-        // ScanToolNames hides router-internal underscore tools from the checklist, so they have no
-        // checkbox to round-trip; carry forward any that were already disabled instead of silently
-        // dropping them when the user saves.
-        IEnumerable<string> uncheckedNames = ToolBoxes
-            .Where(b => b.Checked != true)
-            .Select(b => b.Text);
+        // ScanTools hides router-internal underscore tools from the grid, so they have no checkbox to
+        // round-trip; carry forward any that were already disabled instead of silently dropping them.
+        IEnumerable<string> uncheckedNames = ToolLeaves
+            .Where(leaf => leaf.GetValue(0) is not true)
+            .Select(leaf => leaf.ToolName);
         IEnumerable<string> preservedUnderscore = AISettings.DisabledTools
             .Where(n => n.StartsWith('_'));
         AISettings.DisabledTools = uncheckedNames
@@ -528,9 +576,24 @@ internal sealed class AISettingsDialog : Dialog
             .Where(line => line.Length > 0)
             .ToArray();
 
+    private static string PrettyJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return EmptyMcpJson;
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(doc.RootElement, IndentedJson);
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
     private static bool TryValidateMcpJson(string json, out string normalized, out string error)
     {
-        normalized = "{\"mcpServers\":{}}";
+        normalized = EmptyMcpJson;
         error = string.Empty;
 
         if (string.IsNullOrWhiteSpace(json))
@@ -550,15 +613,39 @@ internal sealed class AISettingsDialog : Dialog
                 error = "MCP config must contain an \"mcpServers\" object.";
                 return false;
             }
+            normalized = JsonSerializer.Serialize(doc.RootElement, IndentedJson);
+            return true;
         }
         catch (JsonException ex)
         {
             error = $"Invalid JSON: {ex.Message}";
             return false;
         }
+    }
 
-        normalized = json;
-        return true;
+    // Immutable scan result for one tool row in the Tools tree.
+    private readonly record struct ToolInfo(string Name, string Title, string Description, string Category);
+
+    // TreeGridView node for the Tools tab. Group nodes carry the category label in column 1 and a
+    // roll-up checkbox in column 0; leaf nodes carry [enabled, title, description] and the tool name.
+    private sealed class ToolNode : TreeGridItem
+    {
+        public string ToolName { get; }
+        public bool IsGroup { get; }
+
+        public ToolNode(string toolName, bool enabled, string title, string description)
+            : base(enabled, title, description)
+        {
+            ToolName = toolName;
+            IsGroup = false;
+        }
+
+        public ToolNode(string category)
+            : base(false, category, string.Empty)
+        {
+            ToolName = string.Empty;
+            IsGroup = true;
+        }
     }
 
     // Mutable view-model backing the agent grid + editor. Converted to/from the immutable
@@ -581,7 +668,6 @@ internal sealed class AISettingsDialog : Dialog
 
         public string StatusGlyph => Available ? "✓" : "✗";
         public string DefaultGlyph => IsDefault ? "★" : string.Empty;
-        public string EnabledGlyph => Enabled ? "✓" : string.Empty;
 
         public AgentRow(
             string name, AgentAdapter adapter, string command, string searchPathsText, string model,

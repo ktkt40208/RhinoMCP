@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -33,7 +34,13 @@ internal static class AgentDispatch
             : Path.GetTempPath();
 
         _ = agent.PromptAsync(message, url, cwd).ContinueWith(
-            t => RhinoApp.WriteLine($"[{agent.Name}] error: {t.Exception?.GetBaseException().Message}"),
+            t =>
+            {
+                Exception error = t.Exception!.GetBaseException();
+                if (error is ObjectDisposedException)
+                    return;   // agent torn down mid-turn (New conversation / Stop) — expected, not an error
+                RhinoApp.WriteLine($"[{agent.Name}] error: {error.Message}");
+            },
             TaskContinuationOptions.OnlyOnFaulted);
     }
 }

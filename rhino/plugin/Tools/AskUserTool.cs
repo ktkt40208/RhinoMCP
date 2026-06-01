@@ -81,8 +81,8 @@ public static class AskUserTool
 
     // UI-thread only: reads AgentHost's unsynchronized dictionaries.
     private static ConversationLookup ResolveConversation(RhinoDoc doc) =>
-        AgentHost.TryFor(doc, out IAgent agent) && agent is CliAgent cli
-            ? new ConversationLookup(true, cli.Conversation)
+        AgentHost.TryFor(doc, out IAgent agent)
+            ? new ConversationLookup(true, agent.Conversation)
             : new ConversationLookup(false, default!);
 
     private static void PrintPrompt(PendingQuestion pending)
