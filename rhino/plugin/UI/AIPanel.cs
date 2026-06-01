@@ -12,9 +12,9 @@ namespace RhMcp;
 // chat bubbles + tool chips, sends prompts through the shared AgentDispatch funnel, and re-renders
 // off the Conversation.Changed event marshaled onto the UI thread (the reader loop is off-thread).
 [Guid("fb948c98-5987-45a3-8dcb-2814ed77ee3b")]
-public class RhMcpPanel : Panel
+public class AIPAnel : Panel
 {
-    public static Guid PanelId => typeof(RhMcpPanel).GUID;
+    public static Guid PanelId => typeof(AIPAnel).GUID;
 
     private uint DocSerial { get; }
 
@@ -23,9 +23,22 @@ public class RhMcpPanel : Panel
     private DropDown RecentPicker { get; } = new() { ToolTip = "Previous conversations" };
     private TextArea PromptBox { get; } = new() { AcceptsReturn = true, AcceptsTab = false, Height = 64 };
     private Button SendButton { get; } = new() { Text = "Send" };
-    private StackLayout TranscriptStack { get; } = new() { Spacing = 8, Padding = new Padding(4) };
+    private StackLayout TranscriptStack { get; } = new()
+    {
+        Spacing = 8,
+        Padding = new Padding(4),
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,   // rows fill width so bubbles can bias left/right
+    };
     private StackLayout AttachmentStrip { get; } = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
+
+    // TODO : Should be a GridView with custom Cells
     private Scrollable TranscriptScroll { get; } = new() { ExpandContentWidth = true };
+
+    // An Eto wrapping label reports its full single-line width, so the Scrollable grows to fit the
+    // longest line (horizontal scroll) instead of wrapping. The cure is an explicit width derived
+    // from the viewport: BubbleBodies tracks the current render's labels, re-capped on resize.
+    private List<Label> BubbleBodies { get; } = new();
+    private int BubbleBodyWidth { get; set; }
 
     private List<Attachment> Pending { get; } = new();
 
@@ -45,17 +58,18 @@ public class RhMcpPanel : Panel
     // genuine user pick drives SetActive/Resubscribe/Rerender.
     private bool Populating { get; set; }
 
-    public RhMcpPanel()
+    public AIPAnel()
         : this(Rhino.RhinoDoc.ActiveDoc is { } doc ? doc.RuntimeSerialNumber : 0u)
     {
     }
 
-    public RhMcpPanel(uint documentSerialNumber)
+    public AIPAnel(uint documentSerialNumber)
     {
         DocSerial = documentSerialNumber;
 
         Padding = new Padding(8);
         TranscriptScroll.Content = TranscriptStack;
+        TranscriptScroll.SizeChanged += (_, _) => ApplyBubbleWidths();
 
         AgentPicker.SelectedValueChanged += OnAgentPicked;
         RecentPicker.SelectedValueChanged += OnRecentPicked;
@@ -79,11 +93,11 @@ public class RhMcpPanel : Panel
             VerticalContentAlignment = VerticalAlignment.Center,
             Items =
             {
-                settingsGear,
+                new StackLayoutItem(settingsGear, false),
                 new StackLayoutItem(AgentPicker, true),
-                ModelLabel,
-                RecentPicker,
-                newConvo,
+                new StackLayoutItem(ModelLabel, false),
+                new StackLayoutItem(RecentPicker, false),
+                new StackLayoutItem(newConvo, false),
             },
         };
 
@@ -298,6 +312,7 @@ public class RhMcpPanel : Panel
         }
 
         TranscriptStack.Items.Clear();
+        BubbleBodies.Clear();
 
         bool anyAgent = AgentRegistry.Chain.Any(static r => r.Available);
         if (!anyAgent)
@@ -449,6 +464,7 @@ public class RhMcpPanel : Panel
             return;
 
         TranscriptStack.Items.Clear();
+        BubbleBodies.Clear();
 
         Button back = new() { Text = "← Back to live" };
         back.Click += (_, _) => ExitReview();
@@ -543,7 +559,15 @@ public class RhMcpPanel : Panel
 
     private static Control Bubble(string text, bool user)
     {
-        Label body = new() { Text = text, Wrap = WrapMode.Word };
+        TextBox body = new()
+        {
+            Text = text,
+            ShowBorder = false,
+            BackgroundColor = Colors.Transparent,
+            AutoSelectMode = AutoSelectMode.Always,
+            ReadOnly = true,
+            TextAlignment = user ? TextAlignment.Right : TextAlignment.Left,
+        };
         Panel inner = new()
         {
             Padding = new Padding(8, 6),
@@ -558,8 +582,8 @@ public class RhMcpPanel : Panel
             Orientation = Orientation.Horizontal,
             Items =
             {
-                user ? new StackLayoutItem(null, true) : new StackLayoutItem(inner),
-                user ? new StackLayoutItem(inner) : new StackLayoutItem(null, true),
+                user ? new StackLayoutItem(new Panel() { Size = new Size(12, 1)}, false) : new StackLayoutItem(inner, true),
+                user ? new StackLayoutItem(inner, true) : new StackLayoutItem(new Panel() { Size = new Size(12, 1)}, false),
             },
         };
     }
@@ -831,23 +855,5 @@ public class RhMcpPanel : Panel
         dialog.ShowModal(this);
         AgentRegistry.Refresh();
         Reload();
-    }
-}
-
-public class MCPPanelCommand : RhinoCommand
-{
-    public override string EnglishName => "MCPPanel";
-
-    protected override string CommandContextHelpUrl => "https://mcneel.github.io/RhinoMCP";
-
-    protected override Rhino.Commands.Result RunCommand(RhinoDoc doc, Rhino.Commands.RunMode mode)
-    {
-        Guid panelId = RhMcpPanel.PanelId;
-        bool visible = Rhino.UI.Panels.IsPanelVisible(panelId);
-        if (visible)
-            Rhino.UI.Panels.ClosePanel(panelId);
-        else
-            Rhino.UI.Panels.OpenPanel(panelId);
-        return Rhino.Commands.Result.Success;
     }
 }
