@@ -33,26 +33,40 @@ public static class RhinoMcpHost
     }
 
     private const int DefaultPort = 10500;
-    public static int GetNextPort()
+
+    // Worked-or-not: true with a bound-then-released free port in `port`, false if the
+    // OS could give us nothing. We bind the candidate to port 0 so the OS assigns any
+    // free ephemeral port rather than failing when our preferred Max+1 happens to be
+    // occupied.
+    public static bool TryGetNextPort(out int port)
     {
-        int nextPort = DefaultPort;
+        int candidate = DefaultPort;
         if (Servers.Count > 0)
         {
-            nextPort = Servers.Max(s => s.Value.Port) + 1;
+            candidate = Servers.Max(s => s.Value.Port) + 1;
         }
 
+        if (TryBindCandidate(candidate, out port))
+            return true;
+
+        return TryBindCandidate(0, out port);
+    }
+
+    private static bool TryBindCandidate(int candidate, out int port)
+    {
+        port = default;
         try
         {
-            System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, nextPort);
+            System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, candidate);
             listener.Start();
-            int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
-            return port;
+            return true;
         }
         catch (Exception ex)
         {
             Console.WriteLine(ex.Message);
-            return -1;
+            return false;
         }
     }
 
@@ -63,10 +77,16 @@ public static class RhinoMcpHost
         McpServer server = new();
         Servers[doc.RuntimeSerialNumber] = server;
 
-        var ok = server.Start(doc, port);
+        bool ok = server.Start(doc, port);
         if (ok)
+        {
             WriteAnnouncement(port);
-        return ok;
+            return true;
+        }
+
+        // A failed start must not leave a dead entry (Port set, HasStarted false) behind.
+        Servers.Remove(doc.RuntimeSerialNumber);
+        return false;
     }
 
     public static void Stop(RhinoDoc doc)
@@ -83,8 +103,7 @@ public static class RhinoMcpHost
             return false;
         // TODO : Check no other server is using the port and report to user
         Stop(doc);
-        Start(doc, port);
-        return true;
+        return Start(doc, port);
     }
 
     // Shared dispatch for both the interactive `MCPStart` command and the

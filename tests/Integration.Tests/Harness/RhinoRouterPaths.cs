@@ -70,7 +70,7 @@ internal static class RhinoRouterPaths
         string? dir = AppContext.BaseDirectory;
         while (dir is not null)
         {
-            if (File.Exists(Path.Combine(dir, "rhino", "rhino.slnx")))
+            if (File.Exists(Path.Combine(dir, "rhino.slnx")))
             {
                 return dir;
             }
@@ -78,6 +78,6 @@ internal static class RhinoRouterPaths
         }
         throw new InvalidOperationException(
             "Could not locate repo root from the test binary's directory. " +
-            "Expected to find a parent directory containing rhino/rhino.slnx.");
+            "Expected to find a parent directory containing rhino.slnx.");
     }
 }

@@ -23,22 +23,19 @@ public static class RhinoLocator
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             IEnumerable<string> directories = Directory.EnumerateDirectories(@$"C:\Program Files\", "Rhino*");
-            foreach(string dir in directories)
+            foreach(string dir in MatchVersionDirectories(directories, version))
             {
-                if (!dir.Contains(version, StringComparison.OrdinalIgnoreCase))
-                {
-                    string candidate = Path.Combine(dir, "System", "Rhino.exe");
-                    // It's unlikely, but not impossible!
-                    if (!File.Exists(candidate)) continue;
-                    path = candidate;
-                    return true;
-                }
+                string candidate = Path.Combine(dir, "System", "Rhino.exe");
+                // It's unlikely, but not impossible!
+                if (!File.Exists(candidate)) continue;
+                path = candidate;
+                return true;
             }
 
             if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
             {
-                path = @$"C:\Program Files\Rhino 9 WIP\Sysem\Rhino.exe";
-                return Directory.Exists(path);
+                path = @$"C:\Program Files\Rhino 9 WIP\System\Rhino.exe";
+                return File.Exists(path);
             }
 
             return false;
@@ -47,13 +44,10 @@ public static class RhinoLocator
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             IEnumerable<string> directories = Directory.EnumerateDirectories(@$"/Applications/", "Rhino*");
-            foreach(string rhinoDir in directories)
+            foreach(string rhinoDir in MatchVersionDirectories(directories, version))
             {
-                if (rhinoDir.Contains(version, StringComparison.OrdinalIgnoreCase))
-                {
-                    path = rhinoDir;
-                    return true;
-                }
+                path = rhinoDir;
+                return true;
             }
 
             if (string.Equals(version, "9", StringComparison.OrdinalIgnoreCase))
@@ -66,6 +60,19 @@ public static class RhinoLocator
         }
 
         return false;
+    }
+
+    // Filters install directories down to those matching the requested version.
+    // Kept as a pure, internal seam so the version-matching logic (the source of
+    // a past inverted-match bug that picked a sibling version) is unit-testable
+    // without a real Rhino install on disk.
+    internal static IEnumerable<string> MatchVersionDirectories(IEnumerable<string> directories, string version)
+    {
+        foreach (string dir in directories)
+        {
+            if (dir.Contains(version, StringComparison.OrdinalIgnoreCase))
+                yield return dir;
+        }
     }
 
     public static IEnumerable<string> ListInstalledVersions()

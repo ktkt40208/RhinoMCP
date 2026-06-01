@@ -61,9 +61,14 @@ public class RhMcpPlugin : PlugIn
         string? portStr = Environment.GetEnvironmentVariable(MCPSpawnCommand.PortEnvVar);
         if (!string.IsNullOrEmpty(portStr)) return;
 
+        if (!RhinoMcpHost.TryGetNextPort(out int port))
+        {
+            RhinoApp.WriteLine("The Rhino MCP Server failed to start: no free port available.");
+            return;
+        }
+
         try
         {
-            int port = RhinoMcpHost.GetNextPort();
             if (RhinoMcpHost.StartOrRestart(e.Document, port, true))
             {
                 RhinoApp.WriteLine("The Rhino MCP Platform is ready.");
@@ -73,7 +78,7 @@ public class RhMcpPlugin : PlugIn
         catch
         {
         }
-        
+
         RhinoApp.WriteLine("The Rhino MCP Server failed to start");
     }
 

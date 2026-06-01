@@ -20,7 +20,12 @@ internal static class AgentDispatch
         // The agent needs an MCP listener as its hands; auto-start one for this doc if absent.
         if (!RhinoMcpHost.TryGetPortFor(doc, out int port))
         {
-            RhinoMcpHost.StartOrRestart(doc, RhinoMcpHost.GetNextPort());
+            if (!RhinoMcpHost.TryGetNextPort(out int nextPort))
+            {
+                RhinoApp.WriteLine($"[{agent.Name}] could not acquire a free port for an MCP server.");
+                return;
+            }
+            RhinoMcpHost.StartOrRestart(doc, nextPort);
             if (!RhinoMcpHost.TryGetPortFor(doc, out port))
             {
                 RhinoApp.WriteLine($"[{agent.Name}] could not start an MCP server for this document.");

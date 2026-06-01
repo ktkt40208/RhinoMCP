@@ -1,4 +1,7 @@
+using System.IO;
 using System.Threading.Tasks;
+
+using Rhino.FileIO;
 
 namespace RhMcp.Internal;
 
@@ -42,10 +45,16 @@ public static class RouterControlTool
                     return;
                 }
 
-                port = RhinoMcpHost.GetNextPort();
+                if (!RhinoMcpHost.TryGetNextPort(out port))
+                {
+                    error = "No free port available for new doc; could not start MCP listener.";
+                    DiscardDoc(newDoc);
+                    return;
+                }
                 if (!RhinoMcpHost.Start(newDoc, port))
                 {
                     error = $"Failed to start MCP listener on port {port} for new doc.";
+                    DiscardDoc(newDoc);
                 }
             }
             catch (Exception ex)
@@ -58,6 +67,43 @@ public static class RouterControlTool
             throw new InvalidOperationException(error);
 
         return JsonSerializer.Serialize(new { port });
+    }
+
+    // Close a freshly-`_New`'d doc we couldn't attach a listener to, so a port or
+    // start failure doesn't leave it orphaned. Must run on the UI thread (callers
+    // are inside InvokeAndWait). Mirrors RhinoMcpHost.StopByPort/CloseDocTool: Mac's
+    // `_-Close` resolves the doc by on-disk path, so give the (unmodified) doc a temp
+    // path via WriteFile, close it, then sweep the temp file after Cocoa's deferred
+    // close.
+    private static void DiscardDoc(RhinoDoc doc)
+    {
+        string tempPath = Path.Combine(
+            Path.GetTempPath(),
+            $"rh-mcp-spawn-discard-{doc.RuntimeSerialNumber}-{Guid.NewGuid():N}.3dm");
+        try
+        {
+            doc.Modified = false;
+            doc.WriteFile(tempPath, new FileWriteOptions
+            {
+                SuppressDialogBoxes = true,
+                WriteUserData = true,
+                UpdateDocumentPath = true,
+            });
+            RhinoApp.RunScript(doc.RuntimeSerialNumber, $"_-Close \"{tempPath}\"", false);
+        }
+        catch (Exception ex)
+        {
+            RhinoApp.WriteLine($"[Rhino MCP] Failed to discard orphaned spawn doc: {ex.Message}");
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(1000).ConfigureAwait(false);
+            try
+            { File.Delete(tempPath); }
+            catch { /* OS temp sweep will get it */ }
+        });
     }
 
     [McpServerTool("_router_close_listener")]

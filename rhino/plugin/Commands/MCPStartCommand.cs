@@ -13,17 +13,16 @@ public class MCPStartCommand : Command
 
     protected override Result RunCommand(RhinoDoc doc, RunMode mode)
     {
-        int port = RhinoMcpHost.GetNextPort();
-
         GetInteger go = new ();
         go.SetCommandPrompt("MCPStart Port");
         go.AcceptNothing(true);
         go.AcceptEnterWhenDone(true);
-        go.SetDefaultInteger(port);
+        if (RhinoMcpHost.TryGetNextPort(out int suggestedPort))
+            go.SetDefaultInteger(suggestedPort);
         go.SetLowerLimit(1, false);
         go.SetUpperLimit(65535, false);
         if (go.Get() != GetResult.Number) return Result.Cancel;
-        port = go.Number();
+        int port = go.Number();
 
         return RhinoMcpHost.StartOrRestart(doc, port) ? Result.Success : Result.Failure;
     }

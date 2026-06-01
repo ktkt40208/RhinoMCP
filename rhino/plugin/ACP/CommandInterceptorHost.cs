@@ -14,6 +14,7 @@ internal sealed class CommandInterceptorHost : IDisposable
     {
         Attached = true;
         RhinoDoc.BeginOpenDocument += OnBeginOpen;
+        RhinoDoc.NewDocument += OnNewDocument;
         RhinoDoc.CloseDocument += OnClose;
         foreach (RhinoDoc doc in RhinoDoc.OpenDocuments())
             Add(doc);
@@ -25,6 +26,7 @@ internal sealed class CommandInterceptorHost : IDisposable
             return;
         Attached = false;
         RhinoDoc.BeginOpenDocument -= OnBeginOpen;
+        RhinoDoc.NewDocument -= OnNewDocument;
         RhinoDoc.CloseDocument -= OnClose;
         foreach (CommandInterceptor interceptor in Interceptors.Values)
             interceptor.Dispose();
@@ -32,6 +34,8 @@ internal sealed class CommandInterceptorHost : IDisposable
     }
 
     private void OnBeginOpen(object? sender, DocumentOpenEventArgs e) => Add(e.Document);
+
+    private void OnNewDocument(object? sender, DocumentEventArgs e) => Add(e.Document);
 
     private void OnClose(object? sender, DocumentEventArgs e)
     {
