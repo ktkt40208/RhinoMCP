@@ -119,6 +119,8 @@ Two staged workflows with a gate between:
 
 Sequencing: "sweep everything first" was chosen, so W0 precedes Stage 0. Accepted cost: W2 and W5 later rewrite parts of the agent layer and the AIPanel render, so a slice of this cleanup gets redone.
 
+Outcome (2026-06-01): the discover pass found 64 verified clusters (6 high, 27 medium, 31 low). The fix ran in priority waves and was deliberately stopped after the substantive work: all 6 high-severity bugs and all 17 correctness mediums (every `bug` and `concept` cluster) are fixed, green (R8 plugin + router + acp build; Router/Server/Acp/Ngentic tests pass; the router now emits 38 tool proxies, was 0), and committed (`c2e96e2`, `8241634`). The remaining 41 hygiene clusters (10 philosophy/deadcode mediums incl. `var`-in-46-files, plus 31 cosmetic lows) are a deferred backlog to run AFTER W1-W10, so style lands on final code rather than code about to be rewritten. Per-cluster detail persisted in `sweep-findings.json` (session memory dir).
+
 ### W1 — Glossary + targeted renames
 
 Lock the glossary above, then rename the worst conflations. The bulk of the renames ride inside W2 so the agent files are touched once. Scope: the triple-meaning `IAgent`/`AcpAgent` runtime role becomes `*Runner`; the `ACP/` plugin folder + namespace becomes `Agents/` (the protocol library keeps the ACP name); `Conversation.SessionId` becomes `AgentSessionId`. Watch the serialization strings in `ConversationDto` / persisted settings keys: rename C# identifiers without changing the on-disk keys, or migrate deliberately.
