@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace RhMcp;
 
-// The single message type threaded through IAgent.PromptAsync.
+// The single message type threaded through IAgentRunner.PromptAsync.
 internal sealed record UserMessage(string Text, IReadOnlyList<Attachment> Attachments)
 {
     // Named FromText (not Text) because the positional record already owns a `Text` property.

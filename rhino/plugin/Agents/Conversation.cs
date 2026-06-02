@@ -83,15 +83,15 @@ internal sealed class Conversation
     // half-asked question is never serialized. Set/cleared by the ask_user tool body.
     private PendingQuestion? CurrentQuestion { get; set; }
 
-    public Conversation(Guid sessionId, string agentName, string docTitle)
+    public Conversation(Guid agentSessionId, string agentName, string docTitle)
     {
-        SessionId = sessionId;
+        AgentSessionId = agentSessionId;
         AgentName = agentName;
         DocTitle = docTitle;
         StartedAt = DateTimeOffset.UtcNow;
     }
 
-    public Guid SessionId { get; }
+    public Guid AgentSessionId { get; }
     public string AgentName { get; }
     public string DocTitle { get; }
     public DateTimeOffset StartedAt { get; }

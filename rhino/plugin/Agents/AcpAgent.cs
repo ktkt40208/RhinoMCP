@@ -6,10 +6,10 @@ using Acp;
 namespace RhMcp;
 
 // Drives any ACP agent (native like Gemini, or a future in-process translator) behind the plugin's
-// IAgent seam. One ACP session per agent instance: the first prompt initializes the connection and
+// IAgentRunner seam. One ACP session per agent instance: the first prompt initializes the connection and
 // opens a session pointed at this doc's rhino MCP server; later prompts reuse it. Streaming arrives
 // out-of-band through RhinoAcpClient on the connection's read loop; the prompt response ends the turn.
-internal sealed class AcpAgent : IAgent
+internal sealed class AcpAgent : IAgentRunner
 {
     private AgentDefinition Definition { get; }
     private RhinoAcpClient Client { get; }

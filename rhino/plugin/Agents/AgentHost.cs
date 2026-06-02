@@ -7,7 +7,7 @@ internal static class AgentHost
 {
     // Keyed by (document serial, agent name) so each doc can drive one agent per kind
     // (Claude, Codex, ...) at once without them colliding on a single slot.
-    private static Dictionary<(uint Doc, string Name), IAgent> Agents { get; } = new();
+    private static Dictionary<(uint Doc, string Name), IAgentRunner> Agents { get; } = new();
 
     // The active agent name per document. Absent => fall back to the configured default.
     private static Dictionary<uint, string> ActiveNames { get; } = new();
@@ -28,7 +28,7 @@ internal static class AgentHost
     // The active agent for the doc, resolved via the registry and pooled per (doc, name).
     // Returns false (rather than null) when discovery finds nothing usable, so callers can
     // surface a friendly message instead of faulting.
-    public static bool TryFor(RhinoDoc doc, out IAgent agent)
+    public static bool TryFor(RhinoDoc doc, out IAgentRunner agent)
     {
         if (!TryResolveActiveDefinition(doc, out AgentDefinition def))
         {
@@ -53,11 +53,11 @@ internal static class AgentHost
         return AgentRegistry.TryResolveActive(out def);
     }
 
-    public static IAgent For(RhinoDoc doc, Func<IAgent> factory)
+    public static IAgentRunner For(RhinoDoc doc, Func<IAgentRunner> factory)
     {
-        IAgent probe = factory();
+        IAgentRunner probe = factory();
         (uint, string) key = (doc.RuntimeSerialNumber, probe.Name);
-        if (Agents.TryGetValue(key, out IAgent? existing))
+        if (Agents.TryGetValue(key, out IAgentRunner? existing))
         {
             SafeDispose(probe);
             return existing;
@@ -69,10 +69,10 @@ internal static class AgentHost
     // The active pooled agent for the doc, so a control verb (cancel/stop) acts on the running
     // turn rather than an arbitrary idle agent the doc happened to drive earlier. Resolves the
     // active definition's name and looks up only that pooled entry; false when none is pooled.
-    public static bool TryFindActive(RhinoDoc doc, out IAgent agent)
+    public static bool TryFindActive(RhinoDoc doc, out IAgentRunner agent)
     {
         if (TryResolveActiveDefinition(doc, out AgentDefinition def) &&
-            Agents.TryGetValue((doc.RuntimeSerialNumber, def.Name), out IAgent? existing))
+            Agents.TryGetValue((doc.RuntimeSerialNumber, def.Name), out IAgentRunner? existing))
         {
             agent = existing;
             return true;
@@ -88,7 +88,7 @@ internal static class AgentHost
 
     public static void Shutdown()
     {
-        foreach (IAgent agent in Agents.Values.ToArray())
+        foreach (IAgentRunner agent in Agents.Values.ToArray())
             SafeDispose(agent);
         Agents.Clear();
         ActiveNames.Clear();
@@ -98,13 +98,13 @@ internal static class AgentHost
     {
         foreach ((uint Doc, string Name) key in Agents.Keys.Where(k => k.Doc == serial).ToArray())
         {
-            if (Agents.Remove(key, out IAgent? agent))
+            if (Agents.Remove(key, out IAgentRunner? agent))
                 SafeDispose(agent);
         }
         ActiveNames.Remove(serial);
     }
 
-    private static void SafeDispose(IAgent agent)
+    private static void SafeDispose(IAgentRunner agent)
     {
         try
         {

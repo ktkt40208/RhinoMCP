@@ -11,7 +11,7 @@ internal static class AgentDispatch
 {
     public static void PromptActive(RhinoDoc doc, UserMessage message)
     {
-        if (!AgentHost.TryFor(doc, out IAgent agent))
+        if (!AgentHost.TryFor(doc, out IAgentRunner agent))
         {
             RhinoApp.WriteLine("No agent available — open AI Settings to configure one.");
             return;

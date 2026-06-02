@@ -4,7 +4,7 @@ namespace RhMcp;
 
 internal static class AgentFactory
 {
-    public static IAgent Create(AgentDefinition def, string docTitle) => def.Adapter switch
+    public static IAgentRunner Create(AgentDefinition def, string docTitle) => def.Adapter switch
     {
         AgentAdapter.Claude => new AcpAgent(def, docTitle, (client, cwd) => new ClaudeAcpAgent(def, client, cwd)),
         AgentAdapter.Codex => new CodexCliAgent(def, docTitle),

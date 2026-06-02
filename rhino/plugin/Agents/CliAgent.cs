@@ -12,7 +12,7 @@ namespace RhMcp;
 // stdout until the turn's terminal event arrives. Subclasses supply only the CLI's
 // specifics — its binary, its launch args, how a turn is framed, and how its event
 // stream is parsed.
-internal abstract class CliAgent : IAgent
+internal abstract class CliAgent : IAgentRunner
 {
     protected AgentDefinition Definition { get; }
 
@@ -33,7 +33,7 @@ internal abstract class CliAgent : IAgent
     protected bool Started { get; private set; }
 
     // In-memory transcript of this agent's turns for this Rhino session. The read hook
-    // for a future panel/export; not yet surfaced on IAgent.
+    // for a future panel/export; not yet surfaced on IAgentRunner.
     public Conversation Conversation { get; }
 
     protected CliAgent(AgentDefinition def, string docTitle)

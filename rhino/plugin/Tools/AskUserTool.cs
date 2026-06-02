@@ -81,7 +81,7 @@ public static class AskUserTool
 
     // UI-thread only: reads AgentHost's unsynchronized dictionaries.
     private static ConversationLookup ResolveConversation(RhinoDoc doc) =>
-        AgentHost.TryFor(doc, out IAgent agent)
+        AgentHost.TryFor(doc, out IAgentRunner agent)
             ? new ConversationLookup(true, agent.Conversation)
             : new ConversationLookup(false, default!);
 

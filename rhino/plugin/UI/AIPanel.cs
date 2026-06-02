@@ -211,7 +211,7 @@ public class AIPAnel : Panel
             // Reflect the resolved active agent without pinning: only a genuine user pick should
             // pin via AgentHost.SetActive, so the registry's first-Enabled-and-Available fallback
             // stays authoritative as availability changes.
-            if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent active))
+            if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgentRunner active))
                 AgentPicker.SelectedKey = active.Name;
             else if (chain.FirstOrDefault(static r => r.Definition.Enabled && r.Available) is { } available)
                 AgentPicker.SelectedKey = available.Definition.Name;
@@ -333,7 +333,7 @@ public class AIPAnel : Panel
 
     private bool TryActiveConversation(out Conversation convo)
     {
-        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent agent))
+        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgentRunner agent))
         {
             convo = agent.Conversation;
             return true;
@@ -739,7 +739,7 @@ public class AIPAnel : Panel
 
     private void CancelActive()
     {
-        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgent agent))
+        if (TryDoc(out RhinoDoc doc) && AgentHost.TryFor(doc, out IAgentRunner agent))
             agent.Cancel();
     }
 
@@ -754,7 +754,7 @@ public class AIPAnel : Panel
         // Resolve/subscribe before dispatch: the first prompt builds the agent, and we want the
         // Changed hook attached before its reader loop starts writing. Gate on availability so a
         // no-op dispatch doesn't silently discard the user's typed prompt + attachments.
-        if (!AgentHost.TryFor(doc, out IAgent _))
+        if (!AgentHost.TryFor(doc, out IAgentRunner _))
         {
             RhinoApp.WriteLine("[rhmcp] No AI agent available; open AI Settings to configure one.");
             return;

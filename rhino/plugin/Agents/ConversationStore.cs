@@ -104,7 +104,7 @@ internal static class ConversationStore
         }
 
         return new ConversationDto(
-            conversation.SessionId.ToString(),
+            conversation.AgentSessionId.ToString(),
             conversation.AgentName,
             conversation.DocTitle,
             conversation.StartedAt,
