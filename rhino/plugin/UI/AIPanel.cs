@@ -384,6 +384,52 @@ public class AIPAnel : Panel
         RenderReview(convo);
     }
 
+    // Resume a reviewed past conversation: make it the doc's live conversation and seed the agent's
+    // CLI session to --resume the saved id, so the next prompt continues with prior context. The
+    // current live conversation (if any) is persisted first so switching away never loses it. Then
+    // exit review onto the restored live transcript; the next prompt launches the CLI with --resume.
+    private void ResumeReviewed(ConversationDto dto)
+    {
+        if (!TryDoc(out RhinoDoc doc))
+            return;
+
+        // Resume tears down (disposes) the doc's pooled runner for this agent kind. Disposing it
+        // mid-turn would kill the streaming process and silently abandon the in-flight answer (the
+        // ObjectDisposedException is swallowed downstream). Guard like every other live-mutation path
+        // (OnSendOrStop, RegeneratePrompt): refuse while a turn is running rather than abort it.
+        if (TurnRunning())
+        {
+            RhinoApp.WriteLine("[rhmcp] cannot resume while a turn is running; stop it first.");
+            return;
+        }
+
+        if (TryActiveConversation(out Conversation current))
+            PersistConversationHook(current);
+
+        if (!AgentHost.TryResume(doc, dto, out IAgentRunner _))
+        {
+            RhinoApp.WriteLine($"[rhmcp] cannot resume: agent '{dto.AgentName}' is no longer available.");
+            return;
+        }
+
+        // Reflect the resumed agent in the picker without re-triggering OnAgentPicked (which would
+        // clear Reviewing and re-pin); we pin LastAgentKey here so a later New/agent-switch is correct.
+        Populating = true;
+        try { AgentPicker.SelectedKey = dto.AgentName; }
+        finally { Populating = false; }
+        LastAgentKey = dto.AgentName;
+        UpdateModelLabel();
+
+        Reviewing = null;
+        ResetUnread();
+        Populating = true;
+        try { RecentPicker.SelectedIndex = 0; }
+        finally { Populating = false; }
+
+        Resubscribe();   // hook the restored conversation's Changed before its first prompt streams
+        Rerender();
+    }
+
     // Leave the read-only transcript and return to the live conversation.
     private void ExitReview()
     {
@@ -841,7 +887,20 @@ public class AIPAnel : Panel
 
         Button back = new() { Text = "← Back to live" };
         back.Click += (_, _) => ExitReview();
-        TranscriptStack.Items.Add(back);
+
+        // Resume only when the saved conversation's agent is enabled AND available, matching the agent
+        // picker's drivability check (OnAgentPicked): a merely-registered-but-disabled / not-found
+        // agent has no launchable runner, so offer review only rather than a Resume that would fault.
+        Button resume = new() { Text = "↩ Resume", ToolTip = "Continue this conversation with the agent" };
+        resume.Enabled = AgentRegistry.Chain.Any(r => r.Definition.Name == convo.AgentName && r is { Definition.Enabled: true, Available: true });
+        resume.Click += (_, _) => ResumeReviewed(convo);
+
+        TranscriptStack.Items.Add(new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items = { back, resume },
+        });
         TranscriptStack.Items.Add(SystemLine($"{convo.DocTitle} · {convo.AgentName} (read-only)"));
 
         TranscriptViewModel vm = TranscriptViewModel.FromReview(convo);

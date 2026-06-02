@@ -34,24 +34,43 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
     private SemaphoreSlim WriteGate { get; } = new(1, 1);
     private SemaphoreSlim TurnGate { get; } = new(1, 1);
 
-    // Stable session id so a respawn (after cancel/crash) resumes the same CLI conversation.
-    private Guid AgentSessionId { get; } = Guid.NewGuid();
+    // Stable session id so a respawn (after cancel/crash) resumes the same CLI conversation. Seeded
+    // from a resumed past conversation when one is supplied, so the first spawn continues that CLI
+    // session rather than opening a brand-new one. Rotated to a fresh id only when a resume target is
+    // rejected (see ReadLoopAsync), since Claude requires --session-id to be a never-used UUID and the
+    // saved id was already consumed by the original session.
+    private Guid AgentSessionId { get; set; }
     private string AgentSessionIdText => AgentSessionId.ToString();
 
-    // Sticky: set true on the first successful spawn and NEVER reset by Kill or read-loop-exit. It
-    // is the parser's 'resume' flag, so a respawn always continues (--resume) rather than re-opening
-    // a fresh session (--session-id), even after the process has exited and the runner restarted it.
+    // Sticky: set true on the first successful spawn and NEVER reset by Kill or read-loop-exit (it is
+    // the parser's 'resume' flag, so a respawn always continues with --resume rather than re-opening a
+    // fresh session). Pre-seeded true when resuming a past conversation so even the FIRST spawn resumes.
     private bool HasEverStarted { get; set; }
+
+    // True only while a resume-from-start spawn has not yet completed a single turn: the saved
+    // --resume target is unproven, so a read-loop exit before any turn lands is treated as the CLI
+    // rejecting the (likely expired) id. We then fail soft to a fresh session (see ReadLoopAsync).
+    private bool ResumePending { get; set; }
 
     private string McpUrl { get; set; } = string.Empty;
 
     public StreamJsonAgent(AgentDefinition def, IAcpClient client, Conversation conversation, string cwd, IStreamJsonParser parser)
+        : this(def, client, conversation, cwd, parser, resumeSessionId: null)
+    {
+    }
+
+    // resumeSessionId carries a past conversation's CLI continuity token to continue it from the first
+    // spawn; null opens a brand-new session with a fresh id.
+    public StreamJsonAgent(AgentDefinition def, IAcpClient client, Conversation conversation, string cwd, IStreamJsonParser parser, Guid? resumeSessionId)
     {
         Definition = def;
         Parser = parser;
         Client = client;
         Conversation = conversation;
         Cwd = cwd;
+        AgentSessionId = resumeSessionId ?? Guid.NewGuid();
+        HasEverStarted = resumeSessionId is not null;   // first spawn resumes when a saved id is supplied
+        ResumePending = resumeSessionId is not null;
     }
 
     public ValueTask<InitializeResponse> InitializeAsync(InitializeRequest request, CancellationToken cancellationToken = default) =>
@@ -97,7 +116,13 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
     {
         TaskCompletionSource<StopReason>? turn;
         lock (Gate)
+        {
             turn = CurrentTurn;
+            // A clean cancel is proof the user, not the CLI, ended the turn, so the resume target was
+            // working: clear the unproven flag (leaving HasEverStarted true) so the read-loop exit
+            // below doesn't misread the kill as a rejected --resume and falsely 'start fresh'.
+            ResumePending = false;
+        }
         turn?.TrySetResult(StopReason.Cancelled);
         Kill();
         return default;
@@ -282,6 +307,7 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
             // terminal event must never hang PromptAsync forever. A clean SessionCancelAsync has
             // already won the TCS by here, so this TrySetException is then a no-op.
             TaskCompletionSource<StopReason>? turn = null;
+            bool resumeRejected = false;
             lock (Gate)
             {
                 // ReferenceEquals(null, null) is true, so the loopback seam (Proc and token both
@@ -293,8 +319,25 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
                     Proc = null;
                     Stdin = null;
                     StartTask = null;
+
+                    // An exit while the resume target is still unproven means the CLI rejected the
+                    // (likely expired) --resume id. Fail soft: re-open fresh next prompt, keeping the
+                    // restored transcript. HasEverStarted=false makes the next spawn pass --session-id,
+                    // and the id is rotated to a fresh Guid because the saved one was already consumed
+                    // by the original session (Claude rejects a reused --session-id as a collision).
+                    // No turn has landed yet, so rotating the ACP-echoed id is safe (the runner already
+                    // captured its own SessionId, and RhinoAcpClient routes by Conversation, not id).
+                    if (ResumePending)
+                    {
+                        resumeRejected = true;
+                        ResumePending = false;
+                        HasEverStarted = false;
+                        AgentSessionId = Guid.NewGuid();
+                    }
                 }
             }
+            if (resumeRejected)
+                Conversation.NoteSystem("could not resume the saved session (it may have expired); started fresh");
             turn?.TrySetException(new IOException($"{Parser.DisplayName} process exited."));
         }
     }
@@ -309,7 +352,10 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
         TaskCompletionSource<StopReason>? turn = null;
         lock (Gate)
             if (ReferenceEquals(Proc, token)) // both null in the loopback seam, so it matches there
+            {
                 turn = CurrentTurn;
+                ResumePending = false; // a turn landed, so the --resume target was accepted
+            }
         if (turn is null)
             return;
         // Record usage onto the live turn BEFORE resolving the TCS: the runner's PromptAsync finally

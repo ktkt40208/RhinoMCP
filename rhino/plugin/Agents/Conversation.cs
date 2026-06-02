@@ -98,10 +98,38 @@ internal sealed class Conversation
         StartedAt = DateTimeOffset.UtcNow;
     }
 
+    // Rebuild a live conversation from a persisted transcript so a resumed session shows its prior
+    // turns and carries the saved AgentSessionId (the CLI's --resume token). The original StartedAt is
+    // kept (not reset to now) so the recents ordering and header stay truthful, and the restored turns
+    // are marked complete. A malformed SessionId degrades to a fresh GUID so a corrupt store can never
+    // throw here.
+    public static Conversation Restore(ConversationDto dto)
+    {
+        Guid sessionId = Guid.TryParse(dto.SessionId, out Guid parsed) ? parsed : Guid.NewGuid();
+        Conversation convo = new(sessionId, dto.AgentName, dto.DocTitle)
+        {
+            StartedAt = dto.StartedAt,
+        };
+
+        foreach (TurnEventDto ev in dto.Lifecycle)
+            convo.LifecycleList.Add(new TurnEvent(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result, ev.Id));
+
+        foreach (TurnDto turnDto in dto.Turns)
+        {
+            Turn turn = new(turnDto.Prompt, convo.Sync);
+            foreach (TurnEventDto ev in turnDto.Events)
+                turn.Add(new TurnEvent(ev.Kind, ev.Text, ev.At, ev.Args, ev.Result, ev.Id));
+            turn.SetUsage(turnDto.Usage);
+            turn.Complete();
+            convo.TurnList.Add(turn);
+        }
+        return convo;
+    }
+
     public Guid AgentSessionId { get; }
     public string AgentName { get; }
     public string DocTitle { get; }
-    public DateTimeOffset StartedAt { get; }
+    public DateTimeOffset StartedAt { get; private init; }
 
     // Raised after every mutation so a panel can re-render. Fired OUTSIDE the lock: handlers
     // marshal to the UI thread and read the graph, which would deadlock if we still held Sync.
@@ -169,6 +197,15 @@ internal sealed class Conversation
     {
         lock (Sync)
             LifecycleList.Add(new TurnEvent(TurnEventKind.SessionStarted, "session started", DateTimeOffset.UtcNow));
+        Changed?.Invoke();
+    }
+
+    // A free-form lifecycle line, rendered like a session marker. Used to surface a fail-soft note
+    // (e.g. a stale --resume target the CLI rejected, so the session restarted fresh).
+    public void NoteSystem(string text)
+    {
+        lock (Sync)
+            LifecycleList.Add(new TurnEvent(TurnEventKind.SessionStarted, text, DateTimeOffset.UtcNow));
         Changed?.Invoke();
     }
 

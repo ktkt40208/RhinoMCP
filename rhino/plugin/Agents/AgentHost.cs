@@ -66,6 +66,29 @@ internal static class AgentHost
         return probe;
     }
 
+    // Adopt a runner restored from a past conversation as the doc's active agent for its kind,
+    // replacing (and disposing) any runner already pooled for (doc, agent name) so the panel and
+    // dispatch both pick up the resumed session. Pins the active name so dispatch resolves to it.
+    // Returns false when the saved conversation's agent is no longer registered.
+    public static bool TryResume(RhinoDoc doc, ConversationDto dto, out IAgentRunner agent)
+    {
+        if (!AgentRegistry.TryGet(dto.AgentName, out AgentDefinition def))
+        {
+            agent = default!;
+            return false;
+        }
+
+        (uint, string) key = (doc.RuntimeSerialNumber, def.Name);
+        if (Agents.Remove(key, out IAgentRunner? prior))
+            SafeDispose(prior);
+
+        IAgentRunner resumed = AgentFactory.CreateResumed(def, dto);
+        Agents[key] = resumed;
+        SetActive(doc, def.Name);
+        agent = resumed;
+        return true;
+    }
+
     // The active pooled agent for the doc, so a control verb (cancel/stop) acts on the running
     // turn rather than an arbitrary idle agent the doc happened to drive earlier. Resolves the
     // active definition's name and looks up only that pooled entry; false when none is pooled.
