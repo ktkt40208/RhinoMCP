@@ -17,4 +17,38 @@
     <Compile Remove="codegen/**/*.cs" />
   </ItemGroup>
 
+  <!-- ACP wire types are generated from schema/*.json. Run the codegen automatically at build so
+       `dotnet build` is self-contained (no manual `dotnet run` step). The generated files stay
+       gitignored build artifacts. Two targets because the SDK globs Compile items during evaluation,
+       before any target runs: a clean build has no generated files at glob time, so the default glob
+       is told to skip them and IncludeAcpGeneratedCode re-adds them after generation, before compile. -->
+  <PropertyGroup>
+    <AcpGeneratedDir>$(MSBuildThisFileDirectory)src/Generated</AcpGeneratedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="src/Generated/**/*.cs" />
+  </ItemGroup>
+
+  <!-- Incremental: only regenerates when the schema or the generator changes (or when the outputs
+       are missing, e.g. a clean checkout / wiped folder). -->
+  <Target Name="GenerateAcpCode"
+          BeforeTargets="BeforeCompile;CoreCompile"
+          Inputs="$(MSBuildThisFileDirectory)schema/schema.json;$(MSBuildThisFileDirectory)schema/meta.json;$(MSBuildThisFileDirectory)codegen/Program.cs"
+          Outputs="$(AcpGeneratedDir)/Enums.g.cs;$(AcpGeneratedDir)/Unions.g.cs;$(AcpGeneratedDir)/Types.g.cs;$(AcpGeneratedDir)/Methods.g.cs">
+    <Message Importance="high" Text="Acp: regenerating wire types from schema/*.json" />
+    <Exec WorkingDirectory="$(MSBuildThisFileDirectory)"
+          Command="dotnet run --project codegen/Acp.Codegen.csproj --configuration Debug --verbosity quiet -- schema/schema.json schema/meta.json src/Generated" />
+  </Target>
+
+  <!-- Always runs (no Inputs/Outputs) so the generated files are in @(Compile) even when generation
+       was skipped as up-to-date; depends on GenerateAcpCode so a clean build generates first. -->
+  <Target Name="IncludeAcpGeneratedCode"
+          DependsOnTargets="GenerateAcpCode"
+          BeforeTargets="BeforeCompile;CoreCompile">
+    <ItemGroup>
+      <Compile Include="$(AcpGeneratedDir)/*.g.cs" />
+    </ItemGroup>
+  </Target>
+
 </Project>
