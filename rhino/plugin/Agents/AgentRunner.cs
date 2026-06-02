@@ -5,11 +5,12 @@ using Acp;
 
 namespace RhMcp;
 
-// Drives any ACP agent (native like Gemini, or a future in-process translator) behind the plugin's
-// IAgentRunner seam. One ACP session per agent instance: the first prompt initializes the connection and
-// opens a session pointed at this doc's rhino MCP server; later prompts reuse it. Streaming arrives
-// out-of-band through RhinoAcpClient on the connection's read loop; the prompt response ends the turn.
-internal sealed class AcpAgent : IAgentRunner
+// Drives any ACP agent (a native connection like Gemini, or a StreamJsonAgent wrapping a stream-json
+// CLI like Claude/Codex) behind the plugin's IAgentRunner seam. One ACP session per agent instance:
+// the first prompt initializes the connection and opens a session pointed at this doc's rhino MCP
+// server; later prompts reuse it. Streaming arrives out-of-band through RhinoAcpClient on the
+// connection's read loop; the prompt response ends the turn.
+internal sealed class AgentRunner : IAgentRunner
 {
     private AgentDefinition Definition { get; }
     private RhinoAcpClient Client { get; }
@@ -18,10 +19,15 @@ internal sealed class AcpAgent : IAgentRunner
     private object Gate { get; } = new();
 
     private IAcpAgent? Connection { get; set; }
+
+    // A real token from SessionNewAsync once Started is true, never read before then (PromptAsync
+    // goes through EnsureStartedAsync first); the initial empty string is just the pre-start value,
+    // not an absence sentinel.
     private string SessionId { get; set; } = string.Empty;
+
     private bool Started { get; set; }
 
-    public AcpAgent(AgentDefinition def, string docTitle, Func<IAcpClient, string, IAcpAgent> connect)
+    public AgentRunner(AgentDefinition def, string docTitle, Func<IAcpClient, string, IAcpAgent> connect)
     {
         Definition = def;
         Connect = connect;
@@ -38,9 +44,9 @@ internal sealed class AcpAgent : IAgentRunner
         await TurnGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await EnsureStartedAsync(mcpUrl, cwd).ConfigureAwait(false);
+            IAcpAgent connection = await EnsureStartedAsync(mcpUrl, cwd).ConfigureAwait(false);
             Conversation.BeginTurn(message.Text);
-            await Connection!.SessionPromptAsync(new PromptRequest
+            await connection.SessionPromptAsync(new PromptRequest
             {
                 SessionId = SessionId,
                 Prompt = AcpMessageMapper.Prompt(message),
@@ -77,10 +83,13 @@ internal sealed class AcpAgent : IAgentRunner
         // finally (TurnGate.Release), and disposing here would race it into ObjectDisposedException.
     }
 
-    private async Task EnsureStartedAsync(string mcpUrl, string cwd)
+    private async Task<IAcpAgent> EnsureStartedAsync(string mcpUrl, string cwd)
     {
         if (Started)
-            return;
+        {
+            lock (Gate)
+                return Connection ?? throw new InvalidOperationException("Connection missing after start.");
+        }
 
         IAcpAgent connection = Connect(Client, cwd);
         try
@@ -99,6 +108,7 @@ internal sealed class AcpAgent : IAgentRunner
                 Started = true;
             }
             Conversation.NoteSessionStarted();
+            return connection;
         }
         catch
         {

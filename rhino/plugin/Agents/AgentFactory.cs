@@ -6,9 +6,9 @@ internal static class AgentFactory
 {
     public static IAgentRunner Create(AgentDefinition def, string docTitle) => def.Adapter switch
     {
-        AgentAdapter.Claude => new AcpAgent(def, docTitle, (client, cwd) => new ClaudeAcpAgent(def, client, cwd)),
-        AgentAdapter.Codex => new CodexCliAgent(def, docTitle),
-        AgentAdapter.Gemini => new AcpAgent(def, docTitle, (client, cwd) => GeminiConnection.Connect(def, client, cwd)),
+        AgentAdapter.Claude => new AgentRunner(def, docTitle, (client, cwd) => new StreamJsonAgent(def, client, cwd, new ClaudeStreamJsonParser(def))),
+        AgentAdapter.Codex => new AgentRunner(def, docTitle, (client, cwd) => new StreamJsonAgent(def, client, cwd, new CodexStreamJsonParser(def))),
+        AgentAdapter.Gemini => new AgentRunner(def, docTitle, (client, cwd) => GeminiConnection.Connect(def, client, cwd)),
         _ => throw new ArgumentOutOfRangeException(nameof(def), def.Adapter, "Unknown agent adapter."),
     };
 }

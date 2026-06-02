@@ -64,8 +64,8 @@ internal static class GeminiConnection
         }
     }
 
-    // Last existing candidate wins, matching CliAgent.TryResolveCommand: Rhino's launch PATH often
-    // lacks Homebrew/npm dirs, so we probe the definition's locations rather than relying on PATH.
+    // Last existing candidate wins: Rhino's launch PATH often lacks Homebrew/npm dirs, so we probe
+    // the definition's locations rather than relying on PATH.
     private static bool TryResolveCommand(IReadOnlyList<string> searchPaths, out string path)
     {
         path = string.Empty;

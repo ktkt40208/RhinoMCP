@@ -15,7 +15,7 @@ internal static class ConversationStore
     private static PersistentSettings Node => AISettings.Conversations;
 
     // Serializes the read-modify-write on the shared Conversations node. Save runs off-thread
-    // from multiple agents (CliAgent, AcpAgent), one per doc; without this, one Save's SetString
+    // from multiple agents (CliAgent, AgentRunner), one per doc; without this, one Save's SetString
     // or DeleteItem can interleave with another's Keys enumeration. Monitor is reentrant, so the
     // Prune -> List nesting inside a held Save is fine.
     private static readonly object Gate = new();
