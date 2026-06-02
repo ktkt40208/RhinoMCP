@@ -139,10 +139,24 @@ internal sealed class CodexStreamJsonParser : IStreamJsonParser
         {
             "agent_message" => EmitAssistant(msg),
             "mcp_tool_call" => EmitToolCall(msg),
-            "task_complete" => ParsedLine.Complete(StopReason.EndTurn), // the terminal event ends the turn
+            "task_complete" => ParsedLine.Complete(StopReason.EndTurn, ReadUsage(msg)), // the terminal event ends the turn
             _ => ParsedLine.None,
         };
     }
+
+    // CONTRACT NOTE (deferred live check): Codex's token accounting field on task_complete is not
+    // validated against the shipped binary. The default assumed here is a `usage` object with
+    // input_tokens/output_tokens; cost is not reported by Codex, so it stays null (tokens only).
+    // Best-effort: a task_complete without usage degrades to TokenUsage.Empty, never faulting the turn.
+    private static TokenUsage ReadUsage(JsonElement msg)
+    {
+        if (!msg.TryGetProperty("usage", out JsonElement usage) || usage.ValueKind != JsonValueKind.Object)
+            return TokenUsage.Empty;
+        return new TokenUsage(ReadInt(usage, "input_tokens"), ReadInt(usage, "output_tokens"), null);
+    }
+
+    private static int ReadInt(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out int v) ? v : 0;
 
     // Assistant text rides directly on the event under `message`.
     private static ParsedLine EmitAssistant(JsonElement msg) =>

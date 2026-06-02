@@ -21,9 +21,27 @@ public class AIPAnel : Panel
 
     private DropDown AgentPicker { get; } = new();
     private Label ModelLabel { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
+    private Label UsageLabel { get; } = new()
+    {
+        VerticalAlignment = VerticalAlignment.Center,
+        TextAlignment = TextAlignment.Right,
+        TextColor = SystemColors.DisabledText,
+        Font = SystemFonts.Default(7),
+    };
     private DropDown RecentPicker { get; } = new() { ToolTip = "Previous conversations" };
     private TextArea PromptBox { get; } = new() { AcceptsReturn = true, AcceptsTab = false, Height = 64 };
     private Button SendButton { get; } = new() { Text = "Send" };
+
+    // In-panel attention cue, shown above the transcript when agent output arrives or a turn finishes
+    // while the panel is not the user's focus, cleared the moment focus returns. Rhino's docked panel
+    // tab title is fixed at RegisterPanel and has no reliable cross-platform runtime setter, so the
+    // unread mark lives inside the content we own rather than on the native tab.
+    private Label UnreadBanner { get; } = new()
+    {
+        VerticalAlignment = VerticalAlignment.Center,
+        Font = SystemFonts.Bold(8),
+        Visible = false,
+    };
     private StackLayout TranscriptStack { get; } = new()
     {
         Spacing = 8,
@@ -34,14 +52,32 @@ public class AIPAnel : Panel
 
     private Scrollable TranscriptScroll { get; } = new() { ExpandContentWidth = true };
 
-    // Each MessageBubble sizes its own wrapped width/height, but must be re-pinned to the viewport
-    // on resize; tool-chip detail labels likewise wrap to the viewport so long JSON never forces a
-    // horizontal scroll. LastBudget short-circuits the resize handler when the width budget is
-    // unchanged (Rerender resets it to force a re-apply over the freshly built controls).
-    private List<MessageBubble> Bubbles { get; } = new();
-    private List<Label> ToolDetails { get; } = new();
+    // The item rows currently materialized, 1:1 with TranscriptStack.Items[0..Rendered.Count) when
+    // Reconcilable. Each row remembers the TranscriptItem it renders so the next render can diff
+    // against it and touch only what changed (see Reconcile). MessageBubble/detail Label are tracked
+    // for width-pinning: a bubble sizes its own wrapped width/height but must be re-pinned to the
+    // viewport on resize, and tool-chip detail labels wrap to the viewport so long JSON never forces
+    // a horizontal scroll. LastBudget short-circuits the resize handler when the width budget is
+    // unchanged; appended rows are pinned at append time so a stable budget still sizes them.
+    private List<RenderedRow> Rendered { get; } = new();
+
+    // Trailing ask_user card, when a question is pending. Sits at TranscriptStack.Items[Rendered.Count];
+    // tracked separately because it is not a TranscriptItem and is rebuilt fresh (it captures the live
+    // question), so reconciliation manages it as its own slot rather than as a diffed row.
+    private Control? QuestionRow { get; set; }
+
+    // True only after a normal live-items render, where TranscriptStack.Items is exactly the Rendered
+    // rows plus the optional QuestionRow. The review / no-agent / starter / single-message states put
+    // other controls in the stack, so they clear this to force the next live render to reset first.
+    private bool Reconcilable { get; set; }
+
     private Font MeasureFont { get; } = SystemFonts.Default();
     private int LastBudget { get; set; } = -1;
+
+    // A materialized transcript row: the item it renders (for diffing), its top-level Control in the
+    // stack, and the bubble / detail label it owns (for width-pinning and in-place streaming updates).
+    // Bubble is set for User/Agent rows; Detail for an expandable tool chip; both null otherwise.
+    private sealed record RenderedRow(TranscriptItem Item, Control Control, MessageBubble? Bubble, Label? Detail);
 
     private const int SideMargin = 10;        // left/right breathing room around every row
     private const int ScrollbarGuard = 18;    // reserve the vertical scrollbar so content never x-scrolls
@@ -81,6 +117,27 @@ public class AIPAnel : Panel
     // dropdown back to this since Eto can't disable individual dropdown items.
     private string LastAgentKey { get; set; } = string.Empty;
 
+    // The attention cue rendered above the transcript. Set when agent output or a turn-complete lands
+    // while the panel is not focused (see ComputeUnread); cleared back to None on focus.
+    private enum UnreadCue
+    {
+        None,
+        Streaming,      // agent output arrived mid-turn while unfocused
+        TurnComplete,   // a turn finished while unfocused (supersedes Streaming)
+    }
+
+    private UnreadCue Unread { get; set; } = UnreadCue.None;
+
+    // True while any control in the panel holds focus (or the panel was just shown). Drives whether
+    // new agent output raises the unread cue. Brief LostFocus/GotFocus flicker as focus moves between
+    // child controls only ever re-clears the cue, never falsely raises it.
+    private bool PanelFocused { get; set; }
+
+    // Snapshot of the live conversation from the previous render, used to detect transitions: a turn
+    // flipping from running to complete, and output arriving while a turn runs.
+    private bool WasRunning { get; set; }
+    private int LastItemCount { get; set; }
+
     public AIPAnel()
         : this(Rhino.RhinoDoc.ActiveDoc is { } doc ? doc.RuntimeSerialNumber : 0u)
     {
@@ -101,13 +158,25 @@ public class AIPAnel : Panel
         Button settingsGear = new() { Text = "⚙", ToolTip = "AI Settings" };
         settingsGear.Click += (_, _) => OpenSettings();
 
-        Button newConvo = new() { Text = "New", ToolTip = "New conversation" };
+        Button newConvo = new() { Text = "New", ToolTip = "New conversation (Ctrl+Shift+N)" };
         newConvo.Click += (_, _) => OnNewConversation();
 
         Button attachButton = new() { Text = "+", ToolTip = "Attach a file" };
         attachButton.Click += (_, _) => OnPickFile();
 
         PromptBox.KeyDown += OnPromptKeyDown;
+
+        // Panel-wide shortcuts (Esc / focus-prompt / new-conversation) work wherever focus sits in the
+        // panel; child KeyDown bubbles up to the container, so one handler here covers the whole panel.
+        KeyDown += OnPanelKeyDown;
+
+        // Focus tracking for the unread cue: any descendant gaining focus, or the pointer entering the
+        // panel, counts as the user's attention and clears the cue; losing focus marks it unfocused.
+        GotFocus += (_, _) => MarkFocused();
+        MouseEnter += (_, _) => MarkFocused();
+        PromptBox.GotFocus += (_, _) => MarkFocused();
+        LostFocus += (_, _) => PanelFocused = false;
+        Shown += (_, _) => MarkFocused();   // becoming visible means the user is on it now
 
         // Two rows so the agent picker gets the full panel width instead of fighting the model
         // label / recents / New for space on a narrow docked panel.
@@ -133,6 +202,7 @@ public class AIPAnel : Panel
             {
                 new StackLayoutItem(ModelLabel, false),
                 new StackLayoutItem(RecentPicker, true),
+                new StackLayoutItem(UsageLabel, false),
             },
         };
 
@@ -158,6 +228,7 @@ public class AIPAnel : Panel
             {
                 new TableRow(headerTop),
                 new TableRow(headerSub),
+                new TableRow(UnreadBanner),
                 new TableRow(TranscriptScroll) { ScaleHeight = true },
                 new TableRow(AttachmentStrip),
                 new TableRow(promptRow),
@@ -291,6 +362,7 @@ public class AIPAnel : Panel
 
         LastAgentKey = name;
         Reviewing = null;   // switching agents returns to a live view
+        ResetUnread();      // the new agent's conversation diffs from a clean snapshot
         AgentHost.SetActive(doc, name);
         UpdateModelLabel();
         Resubscribe();
@@ -369,21 +441,25 @@ public class AIPAnel : Panel
             return;
         }
 
-        ResetTranscript();
-
         bool anyAgent = AgentRegistry.Chain.Any(static r => r.Available);
         if (!anyAgent)
         {
+            ResetTranscript();
             ShowNoAgentState();
             SyncSendButton(false);
+            ClearUsageLabel();
+            ResetUnread();
             return;
         }
 
         if (!TryActiveConversation(out Conversation convo))
         {
+            ResetTranscript();
             RenderItem(new TranscriptItem(TranscriptRole.Agent, "Start a conversation with the active agent."));
             ApplyBubbleWidths();
             SyncSendButton(false);
+            ClearUsageLabel();
+            ResetUnread();
             return;
         }
 
@@ -394,71 +470,254 @@ public class AIPAnel : Panel
             AgentDispatch.TryEnsureListener(liveDoc, out int _);
 
         TranscriptViewModel vm = TranscriptViewModel.FromLive(convo);
+        UpdateUsageLabel(vm);
+        ComputeUnread(vm);
 
         // An agent is ready but the conversation has no turns yet: offer one-tap GH2 starters
         // instead of an empty pane. They vanish the moment a turn starts (vm.Items fills).
         if (vm.Items.Count == 0 && !convo.TryGetPendingQuestion(out _))
         {
+            ResetTranscript();
             ShowStarterChips();
             SyncSendButton(false);
             ApplyBubbleWidths();
             return;
         }
 
-        foreach (TranscriptItem item in vm.Items)
-            RenderItem(item);
+        // Incremental: diff vm.Items against the materialized rows and touch only what changed (a
+        // streaming assistant delta grows the last bubble; a new chip appends; a tool result folds
+        // into its chip). The prior special-state branches each reset, so a stale non-item layout
+        // can't survive into here — but guard anyway and rebuild from scratch if it does.
+        if (!Reconcilable)
+            ResetTranscript();
+        Reconcilable = true;
 
-        if (convo.TryGetPendingQuestion(out PendingQuestion question))
-            TranscriptStack.Items.Add(QuestionCard(question));
+        // The trailing ask_user card is rebuilt fresh each render (it captures the live question), so
+        // drop it before reconciling — otherwise a newly appended item row would land after it.
+        ClearQuestionCard();
+        ReconcileItems(vm.Items);
+        SyncQuestionCard(convo);
 
         SyncSendButton(vm.Running);
         ApplyBubbleWidths();
         ScrollToBottom();
     }
 
-    // Clear the rendered rows and per-render tracking, and force the next ApplyBubbleWidths to
-    // re-pin widths over the freshly built controls even when the viewport width is unchanged.
+    // Reconcile the materialized rows against the new item list: keep the matching prefix, update the
+    // first divergent row in place when the change is a streaming delta / tool-result fold, otherwise
+    // tear down from that row and rebuild the suffix, then append any trailing new items. Earlier,
+    // unchanged turns are never rebuilt.
+    private void ReconcileItems(IReadOnlyList<TranscriptItem> items)
+    {
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (i < Rendered.Count)
+            {
+                if (Rendered[i].Item == items[i])
+                    continue;
+                if (TryUpdateInPlace(i, items[i]))
+                    continue;
+                TruncateRowsFrom(i);
+            }
+            AppendRow(items[i]);
+        }
+        if (Rendered.Count > items.Count)
+            TruncateRowsFrom(items.Count);
+    }
+
+    // The two streaming shapes that can update a row without a rebuild: an assistant/user bubble whose
+    // text grew (same role) and a tool chip whose result just folded in (same header + args). Anything
+    // else (role change, system text change, args change) is a structural change the caller rebuilds.
+    private bool TryUpdateInPlace(int index, TranscriptItem item)
+    {
+        RenderedRow row = Rendered[index];
+        if (row.Item.Role != item.Role)
+            return false;
+
+        switch (item.Role)
+        {
+            case TranscriptRole.User:
+            case TranscriptRole.Agent:
+                if (row.Bubble is not { } bubble)
+                    return false;
+                bubble.Update(item.Text);
+                Rendered[index] = row with { Item = item };
+                return true;
+
+            case TranscriptRole.Tool when row.Item.Text == item.Text && row.Item.ToolArgs == item.ToolArgs:
+                Control chip = ToolChip(item, out Label? detail);
+                // RemoveAt+Insert, not an indexer set: StackLayout reliably relays out on the
+                // Add/Remove CollectionChanged that the append/truncate paths already depend on; a
+                // Replace notification is not a proven trigger for an Eto relayout.
+                TranscriptStack.Items.RemoveAt(index);
+                TranscriptStack.Items.Insert(index, new StackLayoutItem(chip));
+                RenderedRow updated = new(item, chip, null, detail);
+                Rendered[index] = updated;
+                if (LastBudget > 0)
+                    PinRow(updated, LastBudget);   // the folded-in result spawns a fresh detail label
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private void AppendRow(TranscriptItem item)
+    {
+        RenderedRow row = BuildRow(item);
+        Rendered.Add(row);
+        TranscriptStack.Items.Add(row.Control);
+        if (LastBudget > 0)
+            PinRow(row, LastBudget);   // a freshly appended row must size even at a stable budget
+    }
+
+    // Drop every materialized row from `index` on, so a structural change rebuilds only the divergent
+    // suffix, never the unchanged prefix. The caller clears the question card before reconciling, so
+    // the only trailing controls here are item rows.
+    private void TruncateRowsFrom(int index)
+    {
+        for (int i = Rendered.Count - 1; i >= index; i--)
+        {
+            TranscriptStack.Items.RemoveAt(i);
+            Rendered.RemoveAt(i);
+        }
+    }
+
+    // Append the trailing ask_user card, if a question is pending, just after the item rows. The
+    // caller clears any prior card first, so this only ever adds.
+    private void SyncQuestionCard(Conversation convo)
+    {
+        if (convo.TryGetPendingQuestion(out PendingQuestion question))
+        {
+            QuestionRow = QuestionCard(question);
+            TranscriptStack.Items.Add(QuestionRow);
+        }
+    }
+
+    private void ClearQuestionCard()
+    {
+        if (QuestionRow is null)
+            return;
+        TranscriptStack.Items.RemoveAt(Rendered.Count);
+        QuestionRow = null;
+    }
+
+    // Clear every materialized row, the question card, and per-render tracking, and force the next
+    // ApplyBubbleWidths to re-pin widths over freshly built controls even when the viewport is stable.
     private void ResetTranscript()
     {
         TranscriptStack.Items.Clear();
-        Bubbles.Clear();
-        ToolDetails.Clear();
+        Rendered.Clear();
+        QuestionRow = null;
+        Reconcilable = false;
         LastBudget = -1;
     }
 
+    // Used by the non-incremental paths (review, single-message). Builds the row and appends it.
     private void RenderItem(TranscriptItem item)
     {
-        Control control = item.Role switch
+        RenderedRow row = BuildRow(item);
+        Rendered.Add(row);
+        TranscriptStack.Items.Add(row.Control);
+    }
+
+    private RenderedRow BuildRow(TranscriptItem item)
+    {
+        switch (item.Role)
         {
-            TranscriptRole.System => SystemLine(item.Text),
-            TranscriptRole.Tool => ToolChip(item),
-            _ => BubbleRow(item),
-        };
-        TranscriptStack.Items.Add(control);
+            case TranscriptRole.System:
+                return new RenderedRow(item, SystemLine(item.Text), null, null);
+            case TranscriptRole.Tool:
+                Control chip = ToolChip(item, out Label? detail);
+                return new RenderedRow(item, chip, null, detail);
+            default:
+                Control row = BubbleRow(item, out MessageBubble bubble);
+                return new RenderedRow(item, row, bubble, null);
+        }
     }
 
     // A bubble biased left (agent) or right (user) by a stretchable spacer on the open side; the
-    // transcript's side padding plus the spacer give every row left/right breathing room.
-    private Control BubbleRow(TranscriptItem item)
+    // transcript's side padding plus the spacer give every row left/right breathing room. The bubble
+    // is handed back so the row can width-pin it and grow it in place on a streaming delta. User
+    // bubbles carry a small Regenerate / Edit action row beneath them; both route the prompt back
+    // through the normal Send funnel (Regenerate re-sends as-is, Edit drops it into the prompt box).
+    private Control BubbleRow(TranscriptItem item, out MessageBubble bubble)
     {
         bool user = item.Role == TranscriptRole.User;
-        MessageBubble bubble = new(item.Text, user, MeasureFont, MaxBubbleHeight, CopyIcon());
-        Bubbles.Add(bubble);
+        bubble = new(item.Text, user, MeasureFont, MaxBubbleHeight, CopyIcon());
+
+        Control side = user ? UserBubbleColumn(item.Text, bubble) : bubble;
 
         StackLayout row = new() { Orientation = Orientation.Horizontal };
         StackLayoutItem flex = new(null, true);
-        StackLayoutItem fixedBubble = new(bubble, false);
+        StackLayoutItem fixedSide = new(side, false);
         if (user)
         {
             row.Items.Add(flex);
-            row.Items.Add(fixedBubble);
+            row.Items.Add(fixedSide);
         }
         else
         {
-            row.Items.Add(fixedBubble);
+            row.Items.Add(fixedSide);
             row.Items.Add(flex);
         }
         return row;
+    }
+
+    // The user bubble plus its turn-control action row, stacked right-aligned to match the bubble's
+    // right bias. Regenerate re-runs this prompt verbatim; Edit puts it back in the prompt box to
+    // tweak and re-send. Both funnel through Send, never a parallel dispatch path.
+    private Control UserBubbleColumn(string prompt, MessageBubble bubble)
+    {
+        LinkButton regenerate = new() { Text = "↻ Regenerate", Font = SystemFonts.Default(7) };
+        regenerate.Click += (_, _) => RegeneratePrompt(prompt);
+
+        LinkButton edit = new() { Text = "✎ Edit", Font = SystemFonts.Default(7) };
+        edit.Click += (_, _) => EditPrompt(prompt);
+
+        StackLayout actions = new()
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Items = { new StackLayoutItem(null, true), regenerate, edit },
+        };
+
+        return new StackLayout
+        {
+            Spacing = 2,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Items = { new StackLayoutItem(bubble, false), new StackLayoutItem(actions, false) },
+        };
+    }
+
+    // Re-send a previous user prompt verbatim through the Send funnel, starting a fresh agent turn.
+    // No-op while a turn is in flight (the funnel would otherwise queue behind the live turn) or
+    // while reviewing a persisted transcript.
+    private void RegeneratePrompt(string prompt)
+    {
+        if (Reviewing is not null || TurnRunning())
+            return;
+        PromptBox.Text = prompt;
+        Send();
+    }
+
+    // Drop a previous user prompt back into the box for the user to edit and re-send. Pure UI: it
+    // never dispatches on its own, so it is always safe (even mid-turn).
+    private void EditPrompt(string prompt)
+    {
+        if (Reviewing is not null)
+            return;
+        PromptBox.Text = prompt;
+        PromptBox.Focus();
+        PromptBox.CaretIndex = prompt.Length;
+    }
+
+    private bool TurnRunning()
+    {
+        if (!TryActiveConversation(out Conversation convo))
+            return false;
+        IReadOnlyList<Turn> turns = convo.Turns;
+        return turns.Count > 0 && !turns[^1].Completed;
     }
 
     // Inline ask_user affordance rendered at the bottom of the transcript. Click handlers run on
@@ -578,6 +837,7 @@ public class AIPAnel : Panel
             return;
 
         ResetTranscript();
+        ResetUnread();   // the read-only view has no live stream to flag
 
         Button back = new() { Text = "← Back to live" };
         back.Click += (_, _) => ExitReview();
@@ -585,6 +845,7 @@ public class AIPAnel : Panel
         TranscriptStack.Items.Add(SystemLine($"{convo.DocTitle} · {convo.AgentName} (read-only)"));
 
         TranscriptViewModel vm = TranscriptViewModel.FromReview(convo);
+        UpdateUsageLabel(vm);
         foreach (TranscriptItem item in vm.Items)
             RenderItem(item);
 
@@ -603,35 +864,38 @@ public class AIPAnel : Panel
     };
 
     // Compact one-line chip; click toggles an expander showing the tool's args + result. The detail
-    // label is tracked so ApplyBubbleWidths can wrap it to the viewport (long JSON otherwise widens
-    // the transcript and forces a horizontal scroll).
-    private Control ToolChip(TranscriptItem item)
+    // label is handed back (null when there's nothing to expand) so the row can wrap it to the
+    // viewport (long JSON otherwise widens the transcript and forces a horizontal scroll).
+    private Control ToolChip(TranscriptItem item, out Label? detail)
     {
-        string detail = BuildToolDetail(item.ToolArgs, item.ToolResult);
+        string body = BuildToolDetail(item.ToolArgs, item.ToolResult);
+        string header = item.Summary.Length > 0 ? item.Summary : item.Text;
         Label headerLabel = new()
         {
-            Text = $"⚙ {item.Text}",
+            Text = $"⚙ {header}",
             Font = SystemFonts.Default(8),
             TextColor = SystemColors.ControlText,
         };
 
-        if (detail.Length == 0)
-            return new Panel { Padding = new Padding(6, 3), Content = headerLabel };
-
-        Label detailLabel = new()
+        if (body.Length == 0)
         {
-            Text = detail,
+            detail = null;
+            return new Panel { Padding = new Padding(6, 3), Content = headerLabel };
+        }
+
+        detail = new Label
+        {
+            Text = body,
             Wrap = WrapMode.Word,
             Font = SystemFonts.Default(8),
             TextColor = SystemColors.DisabledText,
         };
-        ToolDetails.Add(detailLabel);
 
         Expander expander = new()
         {
             Header = headerLabel,
             Expanded = false,
-            Content = detailLabel,
+            Content = detail,
         };
         return new Panel { Padding = new Padding(6, 3), Content = expander };
     }
@@ -746,8 +1010,100 @@ public class AIPAnel : Panel
     {
         SendButton.Enabled = true;   // re-enable after a read-only review disabled it
         SendButton.Text = running ? "Stop" : "Send";
-        SendButton.ToolTip = running ? "Cancel the current turn" : "Send (Enter)";
+        SendButton.ToolTip = running ? "Cancel the current turn (Esc)" : "Send (Enter)";
     }
+
+    // Subtle per-turn + session-total token (and cost, when the agent reports it) indicator. Hidden
+    // entirely until the agent reports usage, so an agent that never accounts shows nothing rather
+    // than a row of zeros. The tooltip carries the full breakdown; the label stays compact.
+    private void UpdateUsageLabel(TranscriptViewModel vm)
+    {
+        if (vm.SessionUsage.IsEmpty)
+        {
+            ClearUsageLabel();
+            return;
+        }
+        UsageLabel.Text = $"⛁ {FormatUsage(vm.LastTurnUsage)} · session {FormatUsage(vm.SessionUsage)}";
+        UsageLabel.ToolTip =
+            $"This turn: {DescribeUsage(vm.LastTurnUsage)}\nSession total: {DescribeUsage(vm.SessionUsage)}";
+        UsageLabel.Visible = true;
+    }
+
+    private void ClearUsageLabel()
+    {
+        UsageLabel.Text = string.Empty;
+        UsageLabel.ToolTip = string.Empty;
+        UsageLabel.Visible = false;
+    }
+
+    // Raise the unread cue from a live render when the panel isn't focused: a turn finishing is the
+    // strongest signal (and supersedes a streaming cue), output arriving mid-turn the lighter one.
+    // While focused nothing accumulates. The snapshot always advances so the next render diffs cleanly.
+    private void ComputeUnread(TranscriptViewModel vm)
+    {
+        if (!PanelFocused)
+        {
+            if (WasRunning && !vm.Running)
+                Unread = UnreadCue.TurnComplete;
+            else if (vm.Running && vm.Items.Count > LastItemCount && Unread == UnreadCue.None)
+                Unread = UnreadCue.Streaming;
+        }
+
+        WasRunning = vm.Running;
+        LastItemCount = vm.Items.Count;
+        UpdateUnreadBanner();
+    }
+
+    // The banner is UI = f(Unread): a dot for streaming output, a check for turn-complete, hidden when
+    // there's nothing to flag. Cheap enough to recompute every render.
+    private void UpdateUnreadBanner()
+    {
+        switch (Unread)
+        {
+            case UnreadCue.Streaming:
+                UnreadBanner.Text = "● New agent output";
+                UnreadBanner.TextColor = SystemColors.LinkText;
+                UnreadBanner.Visible = true;
+                break;
+            case UnreadCue.TurnComplete:
+                UnreadBanner.Text = "✓ Response ready";
+                UnreadBanner.TextColor = SystemColors.LinkText;
+                UnreadBanner.Visible = true;
+                break;
+            default:
+                UnreadBanner.Text = string.Empty;
+                UnreadBanner.Visible = false;
+                break;
+        }
+    }
+
+    // Clear the cue and its transition snapshot. Called when the live context changes underneath the
+    // panel (new conversation, agent switch, review) so a stale snapshot can't fire a phantom cue and
+    // a left-over banner can't survive into a non-live state.
+    private void ResetUnread()
+    {
+        Unread = UnreadCue.None;
+        WasRunning = false;
+        LastItemCount = 0;
+        UpdateUnreadBanner();
+    }
+
+    // Compact form for the label: total tokens (k-abbreviated) plus a cost when one is reported.
+    private static string FormatUsage(TokenUsage usage)
+    {
+        string tokens = $"{FormatTokens(usage.TotalTokens)} tok";
+        return usage.CostUsd is decimal cost ? $"{tokens} ${cost:0.00}" : tokens;
+    }
+
+    // Verbose form for the tooltip: the input/output split and the cost when present.
+    private static string DescribeUsage(TokenUsage usage)
+    {
+        string split = $"{FormatTokens(usage.InputTokens)} in / {FormatTokens(usage.OutputTokens)} out ({FormatTokens(usage.TotalTokens)} total)";
+        return usage.CostUsd is decimal cost ? $"{split}, ${cost:0.0000}" : split;
+    }
+
+    private static string FormatTokens(int count) =>
+        count >= 1000 ? $"{count / 1000.0:0.#}k" : count.ToString();
 
     // Eto layout is deferred, so TranscriptStack's size is stale right after a rebuild; defer the
     // scroll until after layout settles so streaming actually reaches the true bottom.
@@ -759,7 +1115,8 @@ public class AIPAnel : Panel
 
     // The width budget every row wraps to: the viewport minus the transcript's side padding and a
     // reserve for the vertical scrollbar, so nothing reports a width wider than the viewport (which
-    // would otherwise show a horizontal scrollbar). Re-runs on resize; a no-op when width is stable.
+    // would otherwise show a horizontal scrollbar). Re-runs on resize; a no-op when width is stable
+    // (an incremental render pins its own new/updated rows via PinRow, so the unchanged rest is fine).
     private void ApplyBubbleWidths()
     {
         int viewport = TranscriptScroll.ClientSize.Width;
@@ -770,9 +1127,14 @@ public class AIPAnel : Panel
             return;
         LastBudget = budget;
 
-        foreach (MessageBubble bubble in Bubbles)
-            bubble.Apply(budget);
-        foreach (Label detail in ToolDetails)
+        foreach (RenderedRow row in Rendered)
+            PinRow(row, budget);
+    }
+
+    private static void PinRow(RenderedRow row, int budget)
+    {
+        row.Bubble?.Apply(budget);
+        if (row.Detail is { } detail)
             detail.Width = budget;
     }
 
@@ -790,6 +1152,49 @@ public class AIPAnel : Panel
         bool pasteChord = e.Key == Keys.V && (e.Modifiers.HasFlag(Keys.Application) || e.Modifiers.HasFlag(Keys.Control));
         if (pasteChord && TryPasteAttachment())
             e.Handled = true;
+    }
+
+    // Panel-wide shortcuts, reached via child KeyDown bubbling so they fire wherever focus sits:
+    //   Esc            stop the running turn (no-op when idle, so it falls through harmlessly)
+    //   Ctrl/Cmd+L     focus the prompt box
+    //   Ctrl/Cmd+Shift+N  start a new conversation (Shift avoids clobbering Rhino's own Ctrl+N "New")
+    // Enter / Shift+Enter / paste stay on PromptBox.KeyDown and are untouched.
+    private void OnPanelKeyDown(object? sender, KeyEventArgs e)
+    {
+        bool mod = e.Modifiers.HasFlag(Keys.Application) || e.Modifiers.HasFlag(Keys.Control);
+
+        if (e.Key == Keys.Escape && TurnRunning())
+        {
+            CancelActive();
+            e.Handled = true;
+            return;
+        }
+
+        if (mod && e.Key == Keys.L)
+        {
+            PromptBox.Focus();
+            e.Handled = true;
+            return;
+        }
+
+        if (mod && e.Modifiers.HasFlag(Keys.Shift) && e.Key == Keys.N)
+        {
+            OnNewConversation();
+            e.Handled = true;
+        }
+    }
+
+    // The user is attending to the panel: clear the unread cue and remember focus so subsequent agent
+    // output doesn't re-raise it. Only ever called from Eto focus/pointer handlers, so already on the
+    // UI thread; the banner mutation is safe directly.
+    private void MarkFocused()
+    {
+        PanelFocused = true;
+        if (Unread != UnreadCue.None)
+        {
+            Unread = UnreadCue.None;
+            UpdateUnreadBanner();
+        }
     }
 
     private void OnSendOrStop()
@@ -840,6 +1245,7 @@ public class AIPAnel : Panel
     private void OnNewConversation()
     {
         Reviewing = null;   // a fresh conversation is always a live view
+        ResetUnread();      // the fresh conversation starts from a clean snapshot
         if (TryActiveConversation(out Conversation convo))
             PersistConversationHook(convo);
 

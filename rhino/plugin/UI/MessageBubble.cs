@@ -25,7 +25,13 @@ internal sealed class MessageBubble : Drawable
     private Label Body { get; }
     private Scrollable BodyScroll { get; }
 
-    public string Text { get; }
+    // Mutable so a streaming assistant delta can grow this bubble in place (see Update) instead of
+    // tearing it down and rebuilding; NaturalWidth/MeasuredHeight read it on the next Apply.
+    public string Text { get; private set; }
+
+    // Last width budget Apply ran with, so an in-place text Update can re-pin against the same
+    // viewport without the panel having to feed it back in.
+    private int LastBudget { get; set; } = -1;
 
     public MessageBubble(string text, bool user, Font font, int maxHeight, Image? copyIcon)
     {
@@ -82,10 +88,23 @@ internal sealed class MessageBubble : Drawable
 
     private const int ScrollbarWidth = 16;   // re-wrap allowance once a capped bubble shows a scrollbar
 
+    // Grow this bubble in place for a streaming assistant delta: swap the body text and re-measure
+    // against the last width budget so the row resizes without a teardown/rebuild of the control.
+    public void Update(string text)
+    {
+        if (text == Text)
+            return;
+        Text = text;
+        Body.Text = text;
+        if (LastBudget >= 0)
+            Apply(LastBudget);
+    }
+
     // Hug short messages, wrap long ones, and cap the height with an inner scroll. maxContentWidth
     // is the row's width budget (viewport minus margins + scrollbar).
     public void Apply(int maxContentWidth)
     {
+        LastBudget = maxContentWidth;
         int maxLabel = Math.Max(MinInner, maxContentWidth - 2 * Pad);
         int inner = Math.Clamp(NaturalWidth(), MinInner, maxLabel);
         int contentHeight = MeasuredHeight(inner);

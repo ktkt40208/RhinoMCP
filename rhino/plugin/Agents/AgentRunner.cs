@@ -14,7 +14,7 @@ internal sealed class AgentRunner : IAgentRunner
 {
     private AgentDefinition Definition { get; }
     private RhinoAcpClient Client { get; }
-    private Func<IAcpClient, string, IAcpAgent> Connect { get; }
+    private Func<IAcpClient, Conversation, string, IAcpAgent> Connect { get; }
     private SemaphoreSlim TurnGate { get; } = new(1, 1);
     private object Gate { get; } = new();
 
@@ -27,7 +27,7 @@ internal sealed class AgentRunner : IAgentRunner
 
     private bool Started { get; set; }
 
-    public AgentRunner(AgentDefinition def, string docTitle, Func<IAcpClient, string, IAcpAgent> connect)
+    public AgentRunner(AgentDefinition def, string docTitle, Func<IAcpClient, Conversation, string, IAcpAgent> connect)
     {
         Definition = def;
         Connect = connect;
@@ -91,7 +91,7 @@ internal sealed class AgentRunner : IAgentRunner
                 return Connection ?? throw new InvalidOperationException("Connection missing after start.");
         }
 
-        IAcpAgent connection = Connect(Client, cwd);
+        IAcpAgent connection = Connect(Client, Conversation, cwd);
         try
         {
             await connection.InitializeAsync(new InitializeRequest { ProtocolVersion = ProtocolConstants.Version }).ConfigureAwait(false);

@@ -100,7 +100,7 @@ internal static class ConversationStore
             List<TurnEventDto> events = [];
             foreach (TurnEvent ev in turn.Events)
                 events.Add(ToDto(ev));
-            turns.Add(new TurnDto(turn.Prompt, turn.StartedAt, turn.CompletedAt, events));
+            turns.Add(new TurnDto(turn.Prompt, turn.StartedAt, turn.CompletedAt, events, turn.Usage));
         }
 
         return new ConversationDto(

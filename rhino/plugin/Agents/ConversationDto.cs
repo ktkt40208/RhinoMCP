@@ -16,7 +16,8 @@ internal sealed record TurnDto(
     string Prompt,
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
-    IReadOnlyList<TurnEventDto> Events);
+    IReadOnlyList<TurnEventDto> Events,
+    TokenUsage Usage = default);
 
 internal sealed record ConversationDto(
     string SessionId,

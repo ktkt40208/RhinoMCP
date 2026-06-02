@@ -22,6 +22,7 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
     private AgentDefinition Definition { get; }
     private IStreamJsonParser Parser { get; }
     private IAcpClient Client { get; }
+    private Conversation Conversation { get; }
     private string Cwd { get; }
 
     private Process? Proc { get; set; }
@@ -44,11 +45,12 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
 
     private string McpUrl { get; set; } = string.Empty;
 
-    public StreamJsonAgent(AgentDefinition def, IAcpClient client, string cwd, IStreamJsonParser parser)
+    public StreamJsonAgent(AgentDefinition def, IAcpClient client, Conversation conversation, string cwd, IStreamJsonParser parser)
     {
         Definition = def;
         Parser = parser;
         Client = client;
+        Conversation = conversation;
         Cwd = cwd;
     }
 
@@ -266,7 +268,7 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
                     foreach (SessionUpdate update in parsed.Updates ?? [])
                         Push(update);
                     if (parsed.IsTurnComplete)
-                        CompleteTurn(token, parsed.Reason);
+                        CompleteTurn(token, parsed.Reason, parsed.Usage);
                 }
                 catch (Exception ex)
                 {
@@ -302,13 +304,19 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
     private void Push(SessionUpdate update) =>
         _ = Client.SessionUpdateAsync(new SessionNotification { SessionId = AgentSessionIdText, Update = update });
 
-    private void CompleteTurn(object? token, StopReason reason)
+    private void CompleteTurn(object? token, StopReason reason, TokenUsage usage)
     {
         TaskCompletionSource<StopReason>? turn = null;
         lock (Gate)
             if (ReferenceEquals(Proc, token)) // both null in the loopback seam, so it matches there
                 turn = CurrentTurn;
-        turn?.TrySetResult(reason);
+        if (turn is null)
+            return;
+        // Record usage onto the live turn BEFORE resolving the TCS: the runner's PromptAsync finally
+        // clears Current via CompleteTurn the moment this result lands, so usage must reach the turn
+        // while it is still Current.
+        Conversation.RecordUsage(usage);
+        turn.TrySetResult(reason);
     }
 
     private void Kill()

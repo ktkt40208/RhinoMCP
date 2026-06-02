@@ -111,10 +111,31 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
         {
             "assistant" => EmitAssistant(root),
             "user" => EmitToolResults(root),
-            "result" => ParsedLine.Complete(StopReason.EndTurn),
+            "result" => ParsedLine.Complete(StopReason.EndTurn, ReadUsage(root)),
             _ => ParsedLine.None,
         };
     }
+
+    // The `result` event carries the turn's accounting: a `usage` object with input/output token
+    // counts (cache_* fields ignored for the headline number) and a top-level `total_cost_usd`.
+    // Every field is best-effort: a result without usage degrades to TokenUsage.Empty rather than
+    // faulting the turn.
+    private static TokenUsage ReadUsage(JsonElement root)
+    {
+        int input = 0, output = 0;
+        if (root.TryGetProperty("usage", out JsonElement usage) && usage.ValueKind == JsonValueKind.Object)
+        {
+            input = ReadInt(usage, "input_tokens");
+            output = ReadInt(usage, "output_tokens");
+        }
+        decimal? cost = root.TryGetProperty("total_cost_usd", out JsonElement c) && c.ValueKind == JsonValueKind.Number && c.TryGetDecimal(out decimal d)
+            ? d
+            : null;
+        return new TokenUsage(input, output, cost);
+    }
+
+    private static int ReadInt(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out int v) ? v : 0;
 
     private static ParsedLine EmitAssistant(JsonElement root)
     {
@@ -140,7 +161,7 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
                     break;
             }
         }
-        return updates.Count > 0 ? new ParsedLine(updates, false, StopReason.EndTurn) : ParsedLine.None;
+        return updates.Count > 0 ? ParsedLine.Emit([.. updates]) : ParsedLine.None;
     }
 
     private static ParsedLine EmitToolResults(JsonElement root)
@@ -161,7 +182,7 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
                 RawOutput = block.TryGetProperty("content", out JsonElement output) ? output.Clone() : null,
             });
         }
-        return updates.Count > 0 ? new ParsedLine(updates, false, StopReason.EndTurn) : ParsedLine.None;
+        return updates.Count > 0 ? ParsedLine.Emit([.. updates]) : ParsedLine.None;
     }
 
     private static bool TryGetContent(JsonElement root, out JsonElement content)

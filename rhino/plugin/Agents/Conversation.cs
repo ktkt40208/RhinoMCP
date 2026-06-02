@@ -41,6 +41,13 @@ internal sealed class Turn
     public DateTimeOffset? CompletedAt { get; private set; }
     public bool Completed { get { lock (Sync) return CompletedAt.HasValue; } }
 
+    // Token/cost accounting from the turn's terminal event; TokenUsage.Empty until the agent
+    // reports it (and stays Empty for agents that never do).
+    public TokenUsage Usage { get { lock (Sync) return UsageValue; } }
+    private TokenUsage UsageValue { get; set; } = TokenUsage.Empty;
+
+    internal void SetUsage(TokenUsage usage) { lock (Sync) UsageValue = usage; }
+
     public IReadOnlyList<TurnEvent> Events { get { lock (Sync) return EventList.ToArray(); } }
 
     internal void Add(TurnEvent ev) { lock (Sync) EventList.Add(ev); }
@@ -130,6 +137,32 @@ internal sealed class Conversation
         lock (Sync)
             Current?.SetToolResult(id, result);
         Changed?.Invoke();
+    }
+
+    // Record the current turn's token/cost accounting (from its terminal event). A no-op once the
+    // terminal event already cleared Current (a late, mis-ordered usage drop is dropped, not stored
+    // on the wrong turn). Empty usage is ignored so a turn the agent never accounted for stays Empty.
+    public void RecordUsage(TokenUsage usage)
+    {
+        if (usage.IsEmpty)
+            return;
+        lock (Sync)
+            Current?.SetUsage(usage);
+        Changed?.Invoke();
+    }
+
+    // Sum of every turn's usage: the session total shown in the header. Costs add only when reported
+    // (see TokenUsage.operator+), so a tokens-only session yields a null session cost.
+    public TokenUsage SessionUsage
+    {
+        get
+        {
+            TokenUsage total = TokenUsage.Empty;
+            lock (Sync)
+                foreach (Turn turn in TurnList)
+                    total += turn.Usage;
+            return total;
+        }
     }
 
     public void NoteSessionStarted()
