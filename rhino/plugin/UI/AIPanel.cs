@@ -29,7 +29,7 @@ public class AIPAnel : Panel
         Font = SystemFonts.Default(7),
     };
     private DropDown RecentPicker { get; } = new() { ToolTip = "Previous conversations" };
-    private TextArea PromptBox { get; } = new() { AcceptsReturn = true, AcceptsTab = false, Height = 64 };
+    private TextArea PromptBox { get; } = new() { AcceptsReturn = true, AcceptsTab = false, Height = PromptMinHeight };
     private Button SendButton { get; } = new() { Text = "Send" };
 
     // In-panel attention cue, shown above the transcript when agent output arrives or a turn finishes
@@ -82,6 +82,12 @@ public class AIPAnel : Panel
     private const int SideMargin = 10;        // left/right breathing room around every row
     private const int ScrollbarGuard = 18;    // reserve the vertical scrollbar so content never x-scrolls
     private const int MaxBubbleHeight = 320;  // oversized messages cap here and scroll internally
+
+    // Auto-grow prompt: the TextArea starts at one line and grows with content up to a cap, beyond
+    // which it scrolls internally. The buttons match the min height so they sit flush in the row.
+    private const int PromptMinHeight = 34;   // single-line floor; also the attach/send button height
+    private const int PromptMaxHeight = 140;  // grows to here, then scrolls inside the box
+    private const int PromptInset = 4;         // visual padding wrapped around the borderless TextArea
 
     // GH2-flavoured one-tap openers shown only on an empty conversation; clicking one sends it.
     private static readonly string[] StarterPrompts =
@@ -161,10 +167,16 @@ public class AIPAnel : Panel
         Button newConvo = new() { Text = "New", ToolTip = "New conversation (Ctrl+Shift+N)" };
         newConvo.Click += (_, _) => OnNewConversation();
 
-        Button attachButton = new() { Text = "+", ToolTip = "Attach a file" };
+        Button attachButton = new() { Text = "+", ToolTip = "Attach a file", Height = PromptMinHeight };
         attachButton.Click += (_, _) => OnPickFile();
+        SendButton.Height = PromptMinHeight;
 
         PromptBox.KeyDown += OnPromptKeyDown;
+        PromptBox.TextChanged += (_, _) => GrowPromptToFit();
+        // Re-measure on width change too: a panel resize re-wraps already-entered text, so without
+        // this the box keeps a stale height and clips (narrower) or over-reserves (wider) until the
+        // next keystroke. SizeChanged also fires once after first layout, seeding the initial height.
+        PromptBox.SizeChanged += (_, _) => GrowPromptToFit();
 
         // Panel-wide shortcuts (Esc / focus-prompt / new-conversation) work wherever focus sits in the
         // panel; child KeyDown bubbles up to the container, so one handler here covers the whole panel.
@@ -206,17 +218,30 @@ public class AIPAnel : Panel
             },
         };
 
-        // Center (not stretch) so the small attach/send buttons keep their natural height instead of
-        // growing as tall as the multi-line prompt box (which read as oversized square boxes).
+        // Eto TextArea has no internal padding on every platform, so the borderless box is wrapped in
+        // a bordered Panel whose Padding insets the text off the edge. The panel carries the visible
+        // frame; the inner TextArea is borderless so the two don't double up.
+        PromptBox.Border = BorderType.None;
+        Panel promptFrame = new()
+        {
+            Padding = new Padding(PromptInset),
+            BackgroundColor = SystemColors.ControlBackground,
+            Content = PromptBox,
+        };
+
+        // Bottom (not stretch) so the attach/send buttons keep their fixed PromptMinHeight instead of
+        // growing as tall as a multi-line prompt box (which read as oversized square boxes), and sit
+        // flush at the bottom edge of a grown prompt where a chat composer's buttons belong rather
+        // than floating mid-row (which Center would do as the box grows).
         StackLayout promptRow = new()
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
-            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Bottom,
             Items =
             {
                 attachButton,
-                new StackLayoutItem(PromptBox, true),
+                new StackLayoutItem(promptFrame, true),
                 SendButton,
             },
         };
@@ -240,6 +265,9 @@ public class AIPAnel : Panel
     {
         base.OnLoad(e);
         Reload();
+        // Measure the initial single-line height rather than trusting the literal Height initializer
+        // to stay correct across DPI; SizeChanged covers later resizes.
+        GrowPromptToFit();
     }
 
     // The Conversation is owned by the pooled CliAgent in AgentHost and outlives this panel, so
@@ -1180,7 +1208,16 @@ public class AIPAnel : Panel
     {
         int viewport = TranscriptScroll.ClientSize.Width;
         if (viewport <= 0)
+        {
+            // First render before the Scrollable has laid out: retry once layout settles so a bubble
+            // streaming on the very first turn gets a real width budget instead of staying unpinned.
+            Application.Instance.AsyncInvoke(() =>
+            {
+                if (Loaded && TranscriptScroll.ClientSize.Width > 0)
+                    ApplyBubbleWidths();
+            });
             return;
+        }
         int budget = Math.Max(80, viewport - 2 * SideMargin - ScrollbarGuard);
         if (budget == LastBudget)
             return;
@@ -1211,6 +1248,29 @@ public class AIPAnel : Panel
         bool pasteChord = e.Key == Keys.V && (e.Modifiers.HasFlag(Keys.Application) || e.Modifiers.HasFlag(Keys.Control));
         if (pasteChord && TryPasteAttachment())
             e.Handled = true;
+    }
+
+    // Auto-grow the prompt box with its content: measure the wrapped line count at the current text
+    // width and set the box height between PromptMin/MaxHeight. Past the cap it scrolls internally.
+    // The promptRow TableRow is not ScaleHeight, so growing PromptBox grows the bottom region and the
+    // ScaleHeight transcript row above gives up the space. Skipped until laid out (Width <= 0).
+    private void GrowPromptToFit()
+    {
+        if (!Loaded)
+            return;
+
+        // PromptBox is borderless and is the Content of promptFrame (which carries the PromptInset
+        // padding), so PromptBox.Width is already the inner text width and PromptBox.Height is the
+        // text area height: the frame adds the visual inset outside the box. Measure rows-only here;
+        // do not re-add the inset on either axis or it double-counts and over-wraps / over-grows.
+        int width = PromptBox.Width;
+        if (width <= 0)
+            return;
+
+        int target = TextMeasure.WrappedHeight(MeasureFont, PromptBox.Text ?? string.Empty, width);
+        int clamped = Math.Clamp(target, PromptMinHeight, PromptMaxHeight);
+        if (PromptBox.Height != clamped)
+            PromptBox.Height = clamped;
     }
 
     // Panel-wide shortcuts, reached via child KeyDown bubbling so they fire wherever focus sits:
