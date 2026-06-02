@@ -14,10 +14,11 @@ internal static class AgentPrompts
     // read current state before acting rather than assuming what is selected or open.
     public static string GroundingSteer =>
         "No document or selection state is injected automatically. Before acting on existing geometry "
-        + "(moving, filleting, deleting, querying), first read the current state: call get_selection to "
-        + "see what is selected and list_objects to see what is in the document. Never assume which "
-        + "objects are selected, which document is open, or what already exists — pull the state and "
-        + "confirm before you act on it.";
+        + "(moving, filleting, deleting, querying), first read the current state. For a quick orientation "
+        + "call get_context once: it returns the current selection, the active viewport, and a doc/"
+        + "Grasshopper summary in a single round-trip. Use the focused tools (get_selection, list_objects) "
+        + "when you need more detail than the snapshot gives. Never assume which objects are selected, "
+        + "which document is open, or what already exists — pull the state and confirm before you act on it.";
 
     // The GH2 authoring loop is the headline flow: read the canvas, edit, solve, then act on the
     // structured per-component diagnostics that solve returns rather than assuming the graph is fine.

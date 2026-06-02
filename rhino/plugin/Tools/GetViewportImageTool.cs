@@ -123,15 +123,9 @@ public static class GetViewportImageTool
 
     private sealed class CaptureMetadata
     {
-        public string ViewportName { get; set; } = "";
-        public string DisplayMode { get; set; } = "";
-        public string Projection { get; set; } = "";
-        public double LensLength { get; set; }
-        public Point3d CameraLocation { get; set; }
-        public Point3d CameraTarget { get; set; }
-        public Vector3d CameraUp { get; set; }
-        public int ImageWidth { get; set; }
-        public int ImageHeight { get; set; }
+        public required GetContextTool.ViewportSummary Viewport { get; init; }
+        public required int ImageWidth { get; init; }
+        public required int ImageHeight { get; init; }
         public BoundingBox SceneBoundingBox { get; set; } = BoundingBox.Empty;
         public int VisibleObjectCount { get; set; }
         public int TotalObjectCount { get; set; }
@@ -144,15 +138,7 @@ public static class GetViewportImageTool
 
         var meta = new CaptureMetadata
         {
-            ViewportName = vp.Name ?? "",
-            DisplayMode = vp.DisplayMode?.EnglishName ?? "",
-            Projection = vp.IsPerspectiveProjection ? "perspective"
-                       : vp.IsParallelProjection ? "parallel"
-                       : "two-point-perspective",
-            LensLength = vp.Camera35mmLensLength,
-            CameraLocation = vp.CameraLocation,
-            CameraTarget = vp.CameraTarget,
-            CameraUp = vp.CameraUp,
+            Viewport = GetContextTool.SummarizeViewport(vp),
             ImageWidth = width,
             ImageHeight = height,
         };
@@ -196,25 +182,25 @@ public static class GetViewportImageTool
             {
                 viewport = new
                 {
-                    name = meta.ViewportName,
-                    displayMode = meta.DisplayMode,
-                    projection = meta.Projection,
+                    name = meta.Viewport.Name,
+                    displayMode = meta.Viewport.DisplayMode,
+                    projection = meta.Viewport.Camera.Projection,
                     width = meta.ImageWidth,
                     height = meta.ImageHeight,
                 },
                 camera = new
                 {
-                    location = XYZ(meta.CameraLocation),
-                    target = XYZ(meta.CameraTarget),
-                    up = XYZ((Point3d)meta.CameraUp),
-                    lensLength = meta.LensLength,
+                    location = meta.Viewport.Camera.Location,
+                    target = meta.Viewport.Camera.Target,
+                    up = meta.Viewport.Camera.Up,
+                    lensLength = meta.Viewport.Camera.LensLength,
                 },
                 scene = new
                 {
                     boundingBox = meta.SceneBoundingBox.IsValid ? new
                     {
-                        min = XYZ(meta.SceneBoundingBox.Min),
-                        max = XYZ(meta.SceneBoundingBox.Max),
+                        min = GetContextTool.XYZ(meta.SceneBoundingBox.Min),
+                        max = GetContextTool.XYZ(meta.SceneBoundingBox.Max),
                     } : null,
                     visibleObjectCount = meta.VisibleObjectCount,
                     totalObjectCount = meta.TotalObjectCount,
@@ -223,8 +209,6 @@ public static class GetViewportImageTool
         };
         return JsonSerializer.Serialize(payload);
     }
-
-    private static double[] XYZ(Point3d p) => [p.X, p.Y, p.Z];
 
     private static DefinedViewportProjection ParseProjection(string s) => s.ToLowerInvariant() switch
     {
