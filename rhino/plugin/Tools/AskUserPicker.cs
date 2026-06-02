@@ -229,10 +229,10 @@ internal static class AskUserPicker
         AnswerPicked(docSerial, running, string.Join(", ", selected));
     }
 
-    // The first-wins claim shared with the panel: flip Claimed exactly once, then dispatch the answer
-    // as the agent's next prompt. The live conversation's question is cleared ONLY when the dispatch
-    // is accepted, so a rejected answer (a turn is still running) leaves the card up for a retry
-    // rather than vanishing the question.
+    // The first-wins claim shared with the panel: flip Claimed exactly once, then park the answer as
+    // the agent's next prompt. AnswerActive guarantees delivery (dispatched now if the gate is free,
+    // otherwise held and flushed the instant the running turn ends), so the answer is never lost and
+    // the live conversation's question is cleared unconditionally once parked.
     private static void AnswerPicked(uint docSerial, Running running, string answer)
     {
         if (Interlocked.Exchange(ref running.Claimed, 1) != 0)
@@ -242,8 +242,8 @@ internal static class AskUserPicker
         if (RhinoDoc.FromRuntimeSerialNumber(docSerial) is not { } doc)
             return;
 
-        if (AgentDispatch.PromptActive(doc, UserMessage.FromText(answer)) &&
-            AgentHost.TryFor(doc, out IAgentRunner agent))
+        AgentDispatch.AnswerActive(doc, UserMessage.FromText(answer));
+        if (AgentHost.TryFor(doc, out IAgentRunner agent))
             agent.Conversation.ClearPendingQuestion(running.Question);
     }
 

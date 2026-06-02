@@ -888,10 +888,11 @@ public class AIPAnel : Panel
             return;
         }
 
-        // Clear the question only when the dispatch is accepted; if a turn is still running the
-        // answer is rejected, so leave the card up for a retry rather than losing the answer.
-        if (AgentDispatch.PromptActive(doc, UserMessage.FromText(string.Join(", ", selected))) &&
-            TryActiveConversation(out Conversation convo))
+        // Park the answer and clear the card unconditionally: AnswerActive guarantees delivery (it
+        // dispatches now if the gate is free, otherwise holds the answer and flushes it the instant
+        // the running turn ends), so the answer is never lost and there is nothing to retry.
+        AgentDispatch.AnswerActive(doc, UserMessage.FromText(string.Join(", ", selected)));
+        if (TryActiveConversation(out Conversation convo))
             convo.ClearPendingQuestion(question);
         Rerender();
     }
