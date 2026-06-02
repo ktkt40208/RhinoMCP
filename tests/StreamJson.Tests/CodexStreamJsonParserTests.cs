@@ -65,6 +65,18 @@ public sealed class CodexStreamJsonParserTests
         Assert.That(parsed.IsTurnComplete, Is.True);
         Assert.That(parsed.Reason, Is.EqualTo(StopReason.EndTurn));
         Assert.That(parsed.Updates, Is.Empty);
+        Assert.That(parsed.Usage.IsEmpty, Is.True); // no usage object -> Empty, never faulted
+    }
+
+    [Test]
+    public void Task_complete_surfaces_token_usage_without_cost()
+    {
+        ParsedLine parsed = NewParser().Parse(
+            """{"msg":{"type":"task_complete","last_agent_message":"done","usage":{"input_tokens":200,"output_tokens":90}}}""");
+
+        Assert.That(parsed.Usage.InputTokens, Is.EqualTo(200));
+        Assert.That(parsed.Usage.OutputTokens, Is.EqualTo(90));
+        Assert.That(parsed.Usage.CostUsd, Is.Null); // Codex reports tokens only
     }
 
     [Test]

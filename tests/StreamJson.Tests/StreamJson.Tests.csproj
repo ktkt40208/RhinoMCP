@@ -39,6 +39,7 @@
     <Compile Include="../../rhino/plugin/Agents/AcpMessageMapper.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/IStreamJsonParser.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/ParsedLine.cs" LinkBase="PluginSources" />
+    <Compile Include="../../rhino/plugin/Agents/TokenUsage.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/ClaudeStreamJsonParser.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/CodexStreamJsonParser.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/StreamJsonAgent.cs" LinkBase="PluginSources" />

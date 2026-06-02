@@ -71,6 +71,31 @@ public sealed class ClaudeStreamJsonParserTests
         Assert.That(parsed.IsTurnComplete, Is.True);
         Assert.That(parsed.Reason, Is.EqualTo(StopReason.EndTurn));
         Assert.That(parsed.Updates, Is.Empty);
+        Assert.That(parsed.Usage.IsEmpty, Is.True); // no usage object -> Empty, not faulted
+    }
+
+    [Test]
+    public void Result_line_surfaces_token_usage_and_cost()
+    {
+        ParsedLine parsed = NewParser().Parse(
+            """{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.0123,"usage":{"input_tokens":1500,"output_tokens":640}}""");
+
+        Assert.That(parsed.IsTurnComplete, Is.True);
+        Assert.That(parsed.Usage.InputTokens, Is.EqualTo(1500));
+        Assert.That(parsed.Usage.OutputTokens, Is.EqualTo(640));
+        Assert.That(parsed.Usage.TotalTokens, Is.EqualTo(2140));
+        Assert.That(parsed.Usage.CostUsd, Is.EqualTo(0.0123m));
+    }
+
+    [Test]
+    public void Result_line_without_cost_is_tokens_only()
+    {
+        ParsedLine parsed = NewParser().Parse(
+            """{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":10,"output_tokens":5}}""");
+
+        Assert.That(parsed.Usage.TotalTokens, Is.EqualTo(15));
+        Assert.That(parsed.Usage.CostUsd, Is.Null);
+        Assert.That(parsed.Usage.IsEmpty, Is.False);
     }
 
     [Test]

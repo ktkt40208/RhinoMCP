@@ -29,7 +29,7 @@ public sealed class StreamJsonAgentLoopbackTests
     {
         Conversation conversation = new(Guid.NewGuid(), "claude", "Untitled");
         RhinoAcpClient client = new(conversation);
-        StreamJsonAgent agent = new(ClaudeDef(), client, "/tmp", new ClaudeStreamJsonParser(ClaudeDef()));
+        StreamJsonAgent agent = new(ClaudeDef(), client, conversation, "/tmp", new ClaudeStreamJsonParser(ClaudeDef()));
 
         // AgentRunner owns BeginTurn/CompleteTurn in the real path; the loopback seam only drives the
         // inner IAcpAgent, so open the turn here so RhinoAcpClient.Record lands in a current turn.
