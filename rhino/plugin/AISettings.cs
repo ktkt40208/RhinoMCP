@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using Rhino.PlugIns;
 
@@ -45,19 +44,8 @@ internal static class AISettings
     // The full agent chain: built-ins (always present, Claude-first) overlaid with any custom
     // entries, in chain order. Custom entries that alias a built-in name override the built-in
     // in place; never duplicated. Built-ins are re-seeded on every read so they can't be lost.
-    public static IReadOnlyList<AgentDefinition> GetAgents()
-    {
-        List<AgentDefinition> chain = AgentRegistry.Builtins().ToList();
-        foreach (AgentDefinition custom in DeserializeAgents())
-        {
-            int existing = chain.FindIndex(a => a.Name == custom.Name);
-            if (existing >= 0)
-                chain[existing] = custom with { IsBuiltin = chain[existing].IsBuiltin };
-            else
-                chain.Add(custom);
-        }
-        return chain;
-    }
+    public static IReadOnlyList<AgentDefinition> GetAgents() =>
+        AgentRegistry.Overlay(AgentRegistry.Builtins(), DeserializeAgents());
 
     // Persists the chain. Built-ins are not stored verbatim (they re-seed on read); we store
     // every entry's settable state so a built-in override (e.g. edited search paths) survives.

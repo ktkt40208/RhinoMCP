@@ -33,6 +33,7 @@
     <Compile Include="../../rhino/plugin/Server/Protocol.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/AgentAdapter.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/AgentDefinition.cs" LinkBase="PluginSources" />
+    <Compile Include="../../rhino/plugin/Agents/AgentRegistry.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/AgentPrompts.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/Attachment.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/UserMessage.cs" LinkBase="PluginSources" />
@@ -43,6 +44,8 @@
     <Compile Include="../../rhino/plugin/Agents/ClaudeStreamJsonParser.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/CodexStreamJsonParser.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/StreamJsonAgent.cs" LinkBase="PluginSources" />
+    <Compile Include="../../rhino/plugin/Agents/IAgentRunner.cs" LinkBase="PluginSources" />
+    <Compile Include="../../rhino/plugin/Agents/AgentRunner.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/RhinoAcpClient.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/Conversation.cs" LinkBase="PluginSources" />
     <Compile Include="../../rhino/plugin/Agents/ConversationDto.cs" LinkBase="PluginSources" />

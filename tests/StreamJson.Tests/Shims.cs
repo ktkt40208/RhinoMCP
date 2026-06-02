@@ -35,18 +35,44 @@ namespace Rhino.PlugIns
 
 namespace RhMcp
 {
-    // The two AISettings members the compiled-in closure reads. Tests assign these directly to
-    // script settings-driven behaviour (ResolveMcpServers) and to reset the transcript store.
+    // The AISettings members the compiled-in closure reads. Tests assign these directly to script
+    // settings-driven behaviour (ResolveMcpServers, registry resolution) and to reset the transcript
+    // store. GetAgents/DefaultAgentName feed AgentRegistry; the agent chain defaults to the real
+    // built-ins so registry resolution sees out-of-the-box ordering unless a test overrides it.
     internal static class AISettings
     {
         public static string ExtraMcpServersJson { get; set; } = "{\"mcpServers\":{}}";
 
         public static Rhino.PlugIns.PersistentSettings Conversations { get; set; } = new();
 
+        public static string DefaultAgentName { get; set; } = "claude";
+
+        // When set (resolution tests), GetAgents returns this chain verbatim. When null, GetAgents
+        // mirrors production: built-ins overlaid with CustomAgents through the SAME pure
+        // AgentRegistry.Overlay, so the overlay/dedup invariant the tests assert can't drift from
+        // the real AISettings.GetAgents.
+        private static IReadOnlyList<AgentDefinition>? ChainOverride { get; set; }
+
+        private static IReadOnlyList<AgentDefinition> CustomAgents { get; set; } = [];
+
+        public static IReadOnlyList<AgentDefinition> GetAgents() =>
+            ChainOverride ?? AgentRegistry.Overlay(AgentRegistry.Builtins(), CustomAgents);
+
+        public static void SetAgentsForTest(IReadOnlyList<AgentDefinition> agents) => ChainOverride = agents;
+
+        public static void SetCustomAgentsForTest(IReadOnlyList<AgentDefinition> custom)
+        {
+            ChainOverride = null;
+            CustomAgents = custom;
+        }
+
         public static void ResetForTest()
         {
             ExtraMcpServersJson = "{\"mcpServers\":{}}";
             Conversations = new();
+            DefaultAgentName = "claude";
+            ChainOverride = null;
+            CustomAgents = [];
         }
     }
 

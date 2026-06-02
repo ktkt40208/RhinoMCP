@@ -36,6 +36,25 @@ internal static class AgentRegistry
     private static AgentDefinition Builtin(string name, AgentAdapter adapter, string command) =>
         new(name, adapter, command, DefaultSearchPaths(command), string.Empty, [], string.Empty, true, true);
 
+    // The full chain: built-ins (always present, in their seed order) overlaid with custom entries.
+    // A custom entry that aliases a built-in name overrides it in place (keeping the built-in's
+    // IsBuiltin), never duplicated; a custom entry with a new name is appended after the built-ins.
+    // Pure so AISettings.GetAgents and the headless test shim share one source of truth for the
+    // invariant rather than each reimplementing it.
+    public static IReadOnlyList<AgentDefinition> Overlay(IReadOnlyList<AgentDefinition> builtins, IReadOnlyList<AgentDefinition> custom)
+    {
+        List<AgentDefinition> chain = builtins.ToList();
+        foreach (AgentDefinition entry in custom)
+        {
+            int existing = chain.FindIndex(a => a.Name == entry.Name);
+            if (existing >= 0)
+                chain[existing] = entry with { IsBuiltin = chain[existing].IsBuiltin };
+            else
+                chain.Add(entry);
+        }
+        return chain;
+    }
+
     // Where a normally-installed CLI lands so it is found with zero config: every entry on PATH,
     // then the standard per-user/system install dirs, the npm global bin, and Claude Code's own
     // local dir. On Windows the CLIs install as claude.cmd / claude.exe / gemini.cmd, so each
