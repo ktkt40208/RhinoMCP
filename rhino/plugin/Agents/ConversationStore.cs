@@ -20,15 +20,22 @@ internal static class ConversationStore
     // Prune -> List nesting inside a held Save is fine.
     private static readonly object Gate = new();
 
-    // Snapshot the live graph and rewrite this session's slot, then prune oldest beyond the cap.
+    // Snapshot the live graph on the caller's thread (where the conversation is owned), then marshal
+    // the PersistentSettings write onto the UI thread: every touch of the settings tree (this node
+    // and its siblings read elsewhere on the UI thread) must happen on one thread, since
+    // PersistentSettings is not thread-safe. PersistTurn is already fire-and-forget, so the marshal
+    // is invisible to the turn; the Gate still orders concurrent Saves with List/TryLoad.
     public static void Save(Conversation conversation)
     {
         ConversationDto dto = Snapshot(conversation);
-        lock (Gate)
+        RhinoApp.InvokeOnUiThread(new Action(() =>
         {
-            Node.SetString(dto.SessionId, JsonSerializer.Serialize(dto, McpSerializer.Options));
-            Prune();
-        }
+            lock (Gate)
+            {
+                Node.SetString(dto.SessionId, JsonSerializer.Serialize(dto, McpSerializer.Options));
+                Prune();
+            }
+        }), null);
     }
 
     // Recents first (newest StartedAt). Corrupt slots are skipped, never thrown.

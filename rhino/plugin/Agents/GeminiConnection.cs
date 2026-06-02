@@ -64,14 +64,17 @@ internal static class GeminiConnection
         }
     }
 
-    // Last existing candidate wins: Rhino's launch PATH often lacks Homebrew/npm dirs, so we probe
-    // the definition's locations rather than relying on PATH.
+    // First match wins: SearchPaths leads with PATH, the authoritative source. Identical semantics
+    // to StreamJsonAgent.TryResolveCommand so both agents resolve the same binary off the same list.
     private static bool TryResolveCommand(IReadOnlyList<string> searchPaths, out string path)
     {
-        path = string.Empty;
         foreach (string candidate in searchPaths)
             if (File.Exists(candidate))
+            {
                 path = candidate;
-        return path.Length > 0;
+                return true;
+            }
+        path = string.Empty;
+        return false;
     }
 }

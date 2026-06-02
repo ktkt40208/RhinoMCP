@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>0.1.3</Version>
+    <!-- Version is inherited from rhino/Directory.Build.props (single source). -->
     <Title>Rhino MCP Platform</Title>
     <Company>McNeel</Company>
     <Description>MCP server plugin for Rhino</Description>
@@ -66,6 +66,47 @@
     <Compile Remove="Tools/GH2/**/*.cs" />
     <Compile Remove="Resources/GH2/**/*.cs" />
   </ItemGroup>
+
+  <!-- Rewrite the manifest's `version:` line from $(Version) so the yak manifest
+       can never drift from the single source in Directory.Build.props. Runs as a
+       build dependency (keeps the checked-in file in sync) and before the yak
+       copy (so the staged package picks up the rewritten value). -->
+  <UsingTask TaskName="SyncManifestVersion"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ManifestPath ParameterType="System.String" Required="true" />
+      <Version ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string[] lines = System.IO.File.ReadAllLines(ManifestPath);
+        bool changed = false;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"^\s*version\s*:"))
+            {
+                string updated = "version: " + Version;
+                if (lines[i] != updated)
+                {
+                    lines[i] = updated;
+                    changed = true;
+                }
+            }
+        }
+        if (changed)
+        {
+            System.IO.File.WriteAllLines(ManifestPath, lines);
+            Log.LogMessage(Microsoft.Build.Framework.MessageImportance.High,
+                "[Rhino MCP] Synced manifest.yml version to " + Version);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="SyncManifestVersion" BeforeTargets="Build;BuildYakPackage">
+    <SyncManifestVersion ManifestPath="$(MSBuildProjectDirectory)/manifest.yml" Version="$(Version)" />
+  </Target>
 
   <Target Name="BuildYakPackage" AfterTargets="Build">
     <Copy SourceFiles="$(MSBuildProjectDirectory)/icon.png" DestinationFolder="$(YakStagingDir)/" SkipUnchangedFiles="true" />

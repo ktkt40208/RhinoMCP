@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 // Headless stand-ins for the few RhinoCommon / plugin-bootstrap surfaces the compiled-in agent
@@ -12,6 +13,12 @@ namespace Rhino
     internal static class RhinoApp
     {
         public static void WriteLine(string text) { }
+
+        // ConversationStore.Save marshals its PersistentSettings write onto the UI thread. Headless
+        // there is no UI thread, so run the action inline: deterministic and keeps Save synchronous
+        // for the store tests.
+        public static void InvokeOnUiThread(Delegate method, params object[] args) =>
+            method.DynamicInvoke(args);
     }
 }
 
