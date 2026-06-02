@@ -7,8 +7,10 @@ internal static class AgentPrompts
 {
     public static string AskUserSteer =>
         "To ask the user a question or have them choose between options, always call the "
-        + $"mcp__{RouterMcpConfig.ServerName}__ask_user tool. Never use the built-in AskUserQuestion "
-        + "tool — it cannot be displayed in this environment and will be cancelled.";
+        + $"mcp__{RouterMcpConfig.ServerName}__ask_user tool with the question and the options, then "
+        + "STOP and end your turn. The tool does NOT return the answer: the user's answer arrives as "
+        + "their next message, and you continue from there. Never use the built-in AskUserQuestion "
+        + "tool: it cannot be displayed in this environment and will be cancelled.";
 
     // Grounding is pull-only: no document/canvas state is injected automatically, so the agent must
     // read current state before acting rather than assuming what is selected or open.

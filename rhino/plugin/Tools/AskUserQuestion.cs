@@ -1,20 +1,10 @@
-using System.Threading.Tasks;
-
 namespace RhMcp;
 
 internal enum AskUserMode { Single, Multi }
 
-// Wire-shape carrier; both channels resolve a question into one of these.
-internal sealed record AskUserAnswer(IReadOnlyList<string> Selected, bool Cancelled)
-{
-    public static AskUserAnswer Cancel { get; } = new([], true);
-
-    public static AskUserAnswer Of(IReadOnlyList<string> selected) => new(selected, false);
-}
-
-// The single coordination point both the panel and the command-line channel race on. Whoever
-// calls TryComplete/TryCancel first wins; TaskCompletionSource.TrySetResult is atomic so the
-// loser's call returns false and the awaiting tool body resumes exactly once.
+// Dumb carrier for a posed-but-unanswered question. In the non-blocking model the question is just
+// state both channels read to render; the answer arrives as the agent's NEXT prompt, so there is no
+// TaskCompletionSource to complete and no first-wins race to coordinate.
 internal sealed class PendingQuestion
 {
     public PendingQuestion(string question, IReadOnlyList<string> options, AskUserMode mode)
@@ -34,15 +24,6 @@ internal sealed class PendingQuestion
     public string Question { get; }
     public IReadOnlyList<string> Options { get; }
     public AskUserMode Mode { get; }
-
-    private TaskCompletionSource<AskUserAnswer> Completion { get; } =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public Task<AskUserAnswer> Task => Completion.Task;
-
-    public bool TryComplete(AskUserAnswer answer) => Completion.TrySetResult(answer);
-
-    public bool TryCancel() => Completion.TrySetResult(AskUserAnswer.Cancel);
 
     public static bool IsOther(string label) =>
         string.Equals(label?.Trim(), "Other", StringComparison.OrdinalIgnoreCase);

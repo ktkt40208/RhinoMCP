@@ -82,14 +82,6 @@ internal sealed class CommandInterceptor : IDisposable
     {
         RhinoApp.WriteLine($"{RoutedMarker} {request}");
 
-        // While a question is pending for this doc, this entry is the answer, not a fresh prompt.
-        // cancel/stop still escape; everything else is interpreted against the question's options.
-        if (AskUserRegistry.TryGet(Doc.RuntimeSerialNumber, out PendingQuestion pending))
-        {
-            AnswerPending(pending, request);
-            return;
-        }
-
         // Control verbs act on the running turn immediately, bypassing the queue.
         switch (request.Trim().ToLowerInvariant())
         {
@@ -108,54 +100,5 @@ internal sealed class CommandInterceptor : IDisposable
         }
 
         AgentDispatch.PromptActive(Doc, UserMessage.FromText(request));
-    }
-
-    private void AnswerPending(PendingQuestion pending, string request)
-    {
-        switch (request.Trim().ToLowerInvariant())
-        {
-            case "cancel":
-            case "stop":
-                bool cancelled = pending.TryCancel();
-                RhinoApp.WriteLine(cancelled
-                    ? $"{RoutedMarker} question cancelled."
-                    : $"{RoutedMarker} question already answered.");
-                return;
-        }
-
-        List<string> selected = ResolveAnswer(pending, request);
-        bool won = pending.TryComplete(AskUserAnswer.Of(selected));
-        RhinoApp.WriteLine(won
-            ? $"{RoutedMarker} answered: {string.Join(", ", selected)}"
-            : $"{RoutedMarker} question already answered.");
-    }
-
-    // Single mode: the whole entry is one answer (label, 1-based index, or free-form Other).
-    // Multi mode: comma-separated tokens, each matched to an option or kept as free-form.
-    private static List<string> ResolveAnswer(PendingQuestion pending, string request)
-    {
-        if (pending.Mode == AskUserMode.Single)
-            return [MatchToken(pending.Options, request.Trim())];
-
-        List<string> selected = [];
-        foreach (string token in request.Split(','))
-        {
-            string trimmed = token.Trim();
-            if (trimmed.Length > 0)
-                selected.Add(MatchToken(pending.Options, trimmed));
-        }
-        return selected;
-    }
-
-    private static string MatchToken(IReadOnlyList<string> options, string token)
-    {
-        foreach (string option in options)
-            if (string.Equals(option, token, StringComparison.OrdinalIgnoreCase))
-                return option;
-
-        if (int.TryParse(token, out int index) && index >= 1 && index <= options.Count)
-            return options[index - 1];
-
-        return token;   // unmatched => free-form Other
     }
 }

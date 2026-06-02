@@ -42,14 +42,11 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
 
         string mcpConfig = new JsonObject { ["mcpServers"] = servers }.ToJsonString(McpSerializer.Options);
 
-        // Raise Claude Code's per-tool-call timeout to one hour. ask_user is a human-in-the-loop tool:
-        // the MCP request blocks on q.Task until the user answers. At Claude's 60s default (NWK), the
-        // tool-call times out and aborts the HTTP request, which trips ctx.RequestAborted ->
-        // AskUserTool's ct.Register(TryCancel) -> the tool returns {cancelled:true} ('no answer back')
-        // and the user's later click is dropped. MCP_TOOL_TIMEOUT is read as milliseconds and clamped
-        // [1000, int.MaxValue], so 3600000 gives the human a full hour. MCP_TIMEOUT covers MCP server
-        // startup/handshake for the same reason. (AskUserTool keeps its TryCancel: a genuinely-aborted
-        // request must still release the await; this only stops the PREMATURE timeout.)
+        // Raise Claude Code's per-tool-call timeout to one hour so a genuinely slow tool (a heavy
+        // geometry op, a long script) isn't aborted at Claude's 60s default. MCP_TOOL_TIMEOUT is read
+        // as milliseconds and clamped [1000, int.MaxValue]; MCP_TIMEOUT covers MCP server
+        // startup/handshake. (ask_user no longer needs this: it returns immediately and the answer
+        // arrives as the next prompt, so it never holds a tool call open.)
         psi.Environment["MCP_TOOL_TIMEOUT"] = "3600000";
         psi.Environment["MCP_TIMEOUT"] = "3600000";
 

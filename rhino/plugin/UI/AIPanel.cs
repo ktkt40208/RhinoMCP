@@ -785,25 +785,15 @@ public class AIPAnel : Panel
         return turns.Count > 0 && !turns[^1].Completed;
     }
 
-    // Inline ask_user affordance rendered at the bottom of the transcript. Click handlers run on
-    // the UI thread and only touch managed state + the thread-safe PendingQuestion TCS — no Rhino
-    // modal Get APIs — so the question is safe to answer mid-command. First channel to complete
-    // the TCS wins; the other (command line) call returns false and is ignored.
+    // Inline ask_user affordance rendered at the bottom of the transcript. The tool already returned
+    // (non-blocking): submitting the card dispatches the chosen option label(s) as the agent's NEXT
+    // prompt, which the same live pooled agent reads as the answer and continues from. Click handlers
+    // run on the UI thread and only touch managed state and AgentDispatch (no Rhino modal Get APIs),
+    // so the card is safe to answer mid-command.
     private Control QuestionCard(PendingQuestion question)
     {
         StackLayout body = new() { Spacing = 6, Padding = new Padding(8, 6) };
         body.Items.Add(new Label { Text = $"ask_user: {question.Question}", Font = SystemFonts.Bold() });
-
-        if (question.Task.IsCompleted)
-        {
-            body.Items.Add(new Label
-            {
-                Text = "answered",
-                TextColor = SystemColors.DisabledText,
-                Font = SystemFonts.Default(8),
-            });
-            return Card(body);
-        }
 
         TextBox otherText = new() { PlaceholderText = "Other…" };
 
@@ -868,11 +858,7 @@ public class AIPAnel : Panel
     private Control ButtonRow(PendingQuestion question, Button submit)
     {
         Button cancel = new() { Text = "Cancel" };
-        cancel.Click += (_, _) =>
-        {
-            question.TryCancel();
-            Rerender();
-        };
+        cancel.Click += (_, _) => DismissQuestion(question);
         return new StackLayout
         {
             Orientation = Orientation.Horizontal,
@@ -881,10 +867,45 @@ public class AIPAnel : Panel
         };
     }
 
+    // Submit the panel choice: dispatch the selected label(s) as the agent's next prompt (the live
+    // pooled agent resumes and reads it as the answer), then clear the card. An empty selection is
+    // treated like Cancel: clear the card without prompting.
     private void CompleteFromPanel(PendingQuestion question, IReadOnlyList<string> selected)
     {
-        question.TryComplete(AskUserAnswer.Of(selected));
-        Rerender();   // defensive immediate dismissal; the tool's finally also clears the card
+        if (selected.Count == 0)
+        {
+            DismissQuestion(question);
+            return;
+        }
+        if (!TryDoc(out RhinoDoc doc))
+            return;
+
+        // First-wins through the SAME claim the command-line picker uses: if the picker already
+        // dispatched this question, we lose the claim and do nothing (re-render to drop the card).
+        if (!AskUserPicker.TryClaim(doc.RuntimeSerialNumber, question))
+        {
+            Rerender();
+            return;
+        }
+
+        // Clear the question only when the dispatch is accepted; if a turn is still running the
+        // answer is rejected, so leave the card up for a retry rather than losing the answer.
+        if (AgentDispatch.PromptActive(doc, UserMessage.FromText(string.Join(", ", selected))) &&
+            TryActiveConversation(out Conversation convo))
+            convo.ClearPendingQuestion(question);
+        Rerender();
+    }
+
+    // Drop the pending question without answering it (Cancel, or an empty submit).
+    private void DismissQuestion(PendingQuestion question)
+    {
+        if (TryDoc(out RhinoDoc doc))
+            // First-wins: a panel dismiss aborts the command-line GetOption picker still running for
+            // this question, so the picker can't dispatch a now-cancelled question.
+            AskUserPicker.Cancel(doc.RuntimeSerialNumber, question);
+        if (TryActiveConversation(out Conversation convo))
+            convo.ClearPendingQuestion(question);
+        Rerender();
     }
 
     private static Control Card(Control content) => new Panel

@@ -49,13 +49,14 @@ internal sealed class CodexStreamJsonParser : IStreamJsonParser
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add("mcp_servers.rhino.type=\"http\"");
 
-        // Raise the rhino server's per-tool-call timeout to one hour. ask_user is a human-in-the-loop
-        // tool: the MCP request blocks until the user answers, and a short default tool timeout would
-        // abort the request and drop the answer ('no answer back'). Codex's [mcp_servers.<name>] table
-        // takes tool_timeout_sec (SECONDS, unlike Claude's MCP_TOOL_TIMEOUT milliseconds), set here via
-        // -c on the rhino server. GAP: Codex exposes no MCP-tool-timeout ENV var to mirror, and the CLI
-        // is not present in this environment, so the key name/units are correct-by-construction (see the
-        // CONTRACT NOTE above), not validated against the shipped binary.
+        // Raise the rhino server's per-tool-call timeout to one hour so a genuinely slow tool (a heavy
+        // geometry op, a long script) isn't aborted at a short default. Codex's [mcp_servers.<name>]
+        // table takes tool_timeout_sec (SECONDS, unlike Claude's MCP_TOOL_TIMEOUT milliseconds), set
+        // here via -c on the rhino server. (ask_user no longer needs this: it returns immediately and
+        // the answer arrives as the next prompt, so it never holds a tool call open.) GAP: Codex
+        // exposes no MCP-tool-timeout ENV var to mirror, and the CLI is not present in this
+        // environment, so the key name/units are correct-by-construction (see the CONTRACT NOTE
+        // above), not validated against the shipped binary.
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add("mcp_servers.rhino.tool_timeout_sec=3600");
 

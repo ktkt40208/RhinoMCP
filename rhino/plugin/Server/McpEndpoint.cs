@@ -149,11 +149,16 @@ internal sealed class McpDispatcher
         HashSet<string> disabled = Filtered
             ? new HashSet<string>(RhMcp.AISettings.DisabledTools, StringComparer.OrdinalIgnoreCase)
             : [];
+        // In-panel-only tools (e.g. ask_user) are hidden from the external `/`
+        // endpoint; only the in-panel `/agent` endpoint (Filtered) lists them.
         return Task.FromResult(new JsonRpcResponse
         {
             Result = new ListToolsResult
             {
-                Tools = _tools.All.Where(t => !disabled.Contains(t.Name)).Select(t => new ToolDescriptor
+                Tools = _tools.All
+                    .Where(t => Filtered || !t.InPanelOnly)
+                    .Where(t => !disabled.Contains(t.Name))
+                    .Select(t => new ToolDescriptor
                 {
                     Name = t.Name,
                     Title = t.Title,
@@ -230,6 +235,23 @@ internal sealed class McpDispatcher
                 {
                     Code = JsonRpcErrorCode.MethodNotFound,
                     Message = $"Tool '{p.Name}' is not registered.",
+                }
+            };
+
+        // In-panel-only tools refuse external (`/`) callers with a plain result
+        // rather than a transport error: the call "ran" and told the caller why
+        // it cannot help, so an external agent can recover instead of erroring.
+        if (!Filtered && tool.InPanelOnly)
+            return new JsonRpcResponse
+            {
+                Result = new CallToolResult
+                {
+                    Content =
+                    {
+                        ContentBlock.CreateText(
+                            $"'{p.Name}' is only available to the in-Rhino AI panel agent; "
+                            + "use your own client's question UI."),
+                    },
                 }
             };
 

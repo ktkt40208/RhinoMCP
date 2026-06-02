@@ -85,9 +85,10 @@ internal sealed class Conversation
     private List<TurnEvent> LifecycleList { get; } = new();
     private Turn? Current { get; set; }
 
-    // Transient UI state, not transcript history: the panel renders this inline while an ask_user
-    // tool call is awaiting an answer. Deliberately kept out of Render() and any persistence so a
-    // half-asked question is never serialized. Set/cleared by the ask_user tool body.
+    // Transient UI state, not transcript history: the panel renders this inline while a posed
+    // ask_user question is unanswered. Deliberately kept out of Render() and any persistence so a
+    // half-asked question is never serialized. Set by the ask_user tool body; cleared by the panel
+    // once the answer prompt is dispatched.
     private PendingQuestion? CurrentQuestion { get; set; }
 
     public Conversation(Guid agentSessionId, string agentName, string docTitle)
@@ -226,7 +227,7 @@ internal sealed class Conversation
     }
 
     // ReferenceEquals-guarded so a finished question clearing late can't wipe a newer one that
-    // already replaced it (mirrors AskUserRegistry.Clear).
+    // already replaced it (e.g. a superseding ask_user posed before the old answer landed).
     public void ClearPendingQuestion(PendingQuestion question)
     {
         lock (Sync)

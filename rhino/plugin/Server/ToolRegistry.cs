@@ -40,11 +40,12 @@ internal sealed class ToolRegistry
                 string name = toolAttr.Name ?? method.Name;
                 string? description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
                 bool marshalToUi = method.GetCustomAttribute<BackgroundThreadAttribute>() is null;
+                bool inPanelOnly = method.GetCustomAttribute<InPanelOnlyAttribute>() is not null;
 
                 ToolHandler handler = new(
                     method, name, toolAttr.Title, description,
                     toolAttr.ReadOnly, toolAttr.Destructive,
-                    marshalToUi, services);
+                    marshalToUi, inPanelOnly, services);
 
                 if (!registry.ByName.TryAdd(name, handler))
                     throw new InvalidOperationException($"Duplicate MCP tool name: {name}");
@@ -75,12 +76,17 @@ internal sealed class ToolHandler
     public string? Description { get; }
     public bool ReadOnly { get; }
     public bool Destructive { get; }
+
+    // True for tools that only make sense to the in-Rhino panel agent (the
+    // `/agent` endpoint); the external `/` endpoint hides them and refuses calls.
+    public bool InPanelOnly { get; }
+
     public JsonElement InputSchema { get; }
 
     public ToolHandler(
         MethodInfo method, string name, string? title, string? description,
         bool readOnly, bool destructive,
-        bool marshalToUi, IServiceProvider services)
+        bool marshalToUi, bool inPanelOnly, IServiceProvider services)
     {
         _method = method;
         Name = name;
@@ -89,6 +95,7 @@ internal sealed class ToolHandler
         ReadOnly = readOnly;
         Destructive = destructive;
         _marshalToUi = marshalToUi;
+        InPanelOnly = inPanelOnly;
 
         _parameters = method.GetParameters()
             .Select(pi => ResolveBinding(pi, services))

@@ -59,18 +59,22 @@ internal static class AgentDispatch
         return RhinoMcpHost.TryGetPortFor(doc, out port);
     }
 
-    public static void PromptActive(RhinoDoc doc, UserMessage message)
+    // Returns whether the turn was accepted (queued to run). A false return means nothing started:
+    // no agent, no listener, or a turn is already running for this doc. The ask_user answer paths
+    // lean on this to keep the question card up when the answer could not be dispatched, so the user
+    // can retry instead of losing it.
+    public static bool PromptActive(RhinoDoc doc, UserMessage message)
     {
         if (!AgentHost.TryFor(doc, out IAgentRunner agent))
         {
             RhinoApp.WriteLine("No agent available — open AI Settings to configure one.");
-            return;
+            return false;
         }
 
         if (!TryEnsureListener(doc, out int port))
         {
             RhinoApp.WriteLine($"[{agent.Name}] could not start an MCP server for this document.");
-            return;
+            return false;
         }
 
         string url = $"http://localhost:{port}/agent";
@@ -85,7 +89,7 @@ internal static class AgentDispatch
         if (!gate.Wait(0))
         {
             RhinoApp.WriteLine($"[{agent.Name}] a turn is already running for this document — wait for it to finish or Stop it.");
-            return;
+            return false;
         }
 
         // Fire-and-forget, but never unobserved: a fault from Open/Close/prompt is surfaced here so a
@@ -96,6 +100,7 @@ internal static class AgentDispatch
                 CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted,
                 TaskScheduler.Default);
+        return true;
     }
 
     // Bracket the whole turn in one undo record so a single Ctrl+Z reverts every mutation it made.
