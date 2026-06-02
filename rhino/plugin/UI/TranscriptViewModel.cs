@@ -10,16 +10,20 @@ internal enum TranscriptRole
     User,
     Agent,
     Tool,
+    Usage,   // a completed turn's per-turn token/cost line, rendered small + dim at the turn boundary
 }
 
 // One rendered row in the transcript. Dumb, immutable. Tool rows carry the call's Args/Result for
 // the expander plus a Summary (the human-readable chip header); bubble/system rows leave them empty.
+// Usage rows carry that turn's TokenUsage; every other role leaves it Empty. Record-struct equality
+// (TokenUsage is itself a record struct) keeps ReconcileItems diffing exact.
 internal readonly record struct TranscriptItem(
     TranscriptRole Role,
     string Text,
     string ToolArgs = "",
     string ToolResult = "",
-    string Summary = "");
+    string Summary = "",
+    TokenUsage Usage = default);
 
 // Flattens a live Conversation or a persisted ConversationDto into the ordered rows the panel
 // renders. Assistant text chunks are coalesced into one bubble per run, and a tool call collapses
@@ -30,18 +34,10 @@ internal sealed class TranscriptViewModel
     public IReadOnlyList<TranscriptItem> Items { get; }
     public bool Running { get; }
 
-    // Token/cost accounting for the header indicator: SessionUsage sums every turn, LastTurnUsage is
-    // the most recent turn's (the "this turn" reading). Both TokenUsage.Empty when the agent reports
-    // nothing, which the panel reads as "show no indicator".
-    public TokenUsage SessionUsage { get; }
-    public TokenUsage LastTurnUsage { get; }
-
-    private TranscriptViewModel(IReadOnlyList<TranscriptItem> items, bool running, TokenUsage sessionUsage, TokenUsage lastTurnUsage)
+    private TranscriptViewModel(IReadOnlyList<TranscriptItem> items, bool running)
     {
         Items = items;
         Running = running;
-        SessionUsage = sessionUsage;
-        LastTurnUsage = lastTurnUsage;
     }
 
     public static TranscriptViewModel FromLive(Conversation convo)
@@ -51,15 +47,14 @@ internal sealed class TranscriptViewModel
             items.Add(new TranscriptItem(TranscriptRole.System, ev.Text));
 
         bool running = false;
-        TokenUsage lastTurnUsage = TokenUsage.Empty;
         foreach (Turn turn in convo.Turns)
         {
             items.Add(new TranscriptItem(TranscriptRole.User, turn.Prompt));
             Flatten(items, turn.Events.Select(static ev => (ev.Kind, ev.Text, ev.Args, ev.Result)));
             running = !turn.Completed;
-            lastTurnUsage = turn.Usage;
+            AppendUsage(items, turn.Completed, turn.Usage);
         }
-        return new TranscriptViewModel(items, running, convo.SessionUsage, lastTurnUsage);
+        return new TranscriptViewModel(items, running);
     }
 
     public static TranscriptViewModel FromReview(ConversationDto convo)
@@ -68,16 +63,22 @@ internal sealed class TranscriptViewModel
         foreach (TurnEventDto ev in convo.Lifecycle)
             items.Add(new TranscriptItem(TranscriptRole.System, ev.Text));
 
-        TokenUsage session = TokenUsage.Empty;
-        TokenUsage lastTurnUsage = TokenUsage.Empty;
         foreach (TurnDto turn in convo.Turns)
         {
             items.Add(new TranscriptItem(TranscriptRole.User, turn.Prompt));
             Flatten(items, turn.Events.Select(static ev => (ev.Kind, ev.Text, ev.Args, ev.Result)));
-            session += turn.Usage;
-            lastTurnUsage = turn.Usage;
+            AppendUsage(items, completed: true, turn.Usage);   // persisted turns are always complete
         }
-        return new TranscriptViewModel(items, running: false, session, lastTurnUsage);
+        return new TranscriptViewModel(items, running: false);
+    }
+
+    // Per-turn usage line at the turn boundary: only for a completed turn the agent actually accounted
+    // for. A running turn (its usage lands with the terminal event) and a turn with no usage emit
+    // nothing, so a still-streaming turn never shows a premature/zero figure.
+    private static void AppendUsage(List<TranscriptItem> items, bool completed, TokenUsage usage)
+    {
+        if (completed && !usage.IsEmpty)
+            items.Add(new TranscriptItem(TranscriptRole.Usage, string.Empty, Usage: usage));
     }
 
     private static void Flatten(

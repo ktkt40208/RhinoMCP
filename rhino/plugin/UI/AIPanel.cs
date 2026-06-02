@@ -21,13 +21,6 @@ public class AIPAnel : Panel
 
     private DropDown AgentPicker { get; } = new();
     private Label ModelLabel { get; } = new() { VerticalAlignment = VerticalAlignment.Center };
-    private Label UsageLabel { get; } = new()
-    {
-        VerticalAlignment = VerticalAlignment.Center,
-        TextAlignment = TextAlignment.Right,
-        TextColor = SystemColors.DisabledText,
-        Font = SystemFonts.Default(7),
-    };
     private DropDown RecentPicker { get; } = new() { ToolTip = "Previous conversations" };
     private TextArea PromptBox { get; } = new() { AcceptsReturn = true, AcceptsTab = false, Height = PromptMinHeight };
     private Button SendButton { get; } = new() { Text = "Send" };
@@ -214,7 +207,6 @@ public class AIPAnel : Panel
             {
                 new StackLayoutItem(ModelLabel, false),
                 new StackLayoutItem(RecentPicker, true),
-                new StackLayoutItem(UsageLabel, false),
             },
         };
 
@@ -521,7 +513,6 @@ public class AIPAnel : Panel
             ResetTranscript();
             ShowNoAgentState();
             SyncSendButton(false);
-            ClearUsageLabel();
             ResetUnread();
             return;
         }
@@ -532,7 +523,6 @@ public class AIPAnel : Panel
             RenderItem(new TranscriptItem(TranscriptRole.Agent, "Start a conversation with the active agent."));
             ApplyBubbleWidths();
             SyncSendButton(false);
-            ClearUsageLabel();
             ResetUnread();
             return;
         }
@@ -544,7 +534,6 @@ public class AIPAnel : Panel
             AgentDispatch.TryEnsureListener(liveDoc, out int _);
 
         TranscriptViewModel vm = TranscriptViewModel.FromLive(convo);
-        UpdateUsageLabel(vm);
         ComputeUnread(vm);
 
         // An agent is ready but the conversation has no turns yet: offer one-tap GH2 starters
@@ -701,6 +690,8 @@ public class AIPAnel : Panel
         {
             case TranscriptRole.System:
                 return new RenderedRow(item, SystemLine(item.Text), null, null);
+            case TranscriptRole.Usage:
+                return new RenderedRow(item, UsageLine(item.Usage), null, null);
             case TranscriptRole.Tool:
                 Control chip = ToolChip(item, out Label? detail);
                 return new RenderedRow(item, chip, null, detail);
@@ -932,7 +923,6 @@ public class AIPAnel : Panel
         TranscriptStack.Items.Add(SystemLine($"{convo.DocTitle} · {convo.AgentName} (read-only)"));
 
         TranscriptViewModel vm = TranscriptViewModel.FromReview(convo);
-        UpdateUsageLabel(vm);
         foreach (TranscriptItem item in vm.Items)
             RenderItem(item);
 
@@ -946,6 +936,18 @@ public class AIPAnel : Panel
     {
         Text = $"— {text} —",
         TextAlignment = TextAlignment.Center,
+        TextColor = SystemColors.DisabledText,
+        Font = SystemFonts.Default(7),
+    };
+
+    // The completed turn's per-turn token (and cost, when reported) reading, dropped small + dim and
+    // right-aligned at the turn boundary. Built only for non-empty usage (the view-model never emits a
+    // Usage row otherwise), so it always has a figure to show. The tooltip carries the in/out split.
+    private static Control UsageLine(TokenUsage usage) => new Label
+    {
+        Text = $"⛁ {FormatUsage(usage)}",
+        ToolTip = DescribeUsage(usage),
+        TextAlignment = TextAlignment.Right,
         TextColor = SystemColors.DisabledText,
         Font = SystemFonts.Default(7),
     };
@@ -1098,29 +1100,6 @@ public class AIPAnel : Panel
         SendButton.Enabled = true;   // re-enable after a read-only review disabled it
         SendButton.Text = running ? "Stop" : "Send";
         SendButton.ToolTip = running ? "Cancel the current turn (Esc)" : "Send (Enter)";
-    }
-
-    // Subtle per-turn + session-total token (and cost, when the agent reports it) indicator. Hidden
-    // entirely until the agent reports usage, so an agent that never accounts shows nothing rather
-    // than a row of zeros. The tooltip carries the full breakdown; the label stays compact.
-    private void UpdateUsageLabel(TranscriptViewModel vm)
-    {
-        if (vm.SessionUsage.IsEmpty)
-        {
-            ClearUsageLabel();
-            return;
-        }
-        UsageLabel.Text = $"⛁ {FormatUsage(vm.LastTurnUsage)} · session {FormatUsage(vm.SessionUsage)}";
-        UsageLabel.ToolTip =
-            $"This turn: {DescribeUsage(vm.LastTurnUsage)}\nSession total: {DescribeUsage(vm.SessionUsage)}";
-        UsageLabel.Visible = true;
-    }
-
-    private void ClearUsageLabel()
-    {
-        UsageLabel.Text = string.Empty;
-        UsageLabel.ToolTip = string.Empty;
-        UsageLabel.Visible = false;
     }
 
     // Raise the unread cue from a live render when the panel isn't focused: a turn finishing is the
