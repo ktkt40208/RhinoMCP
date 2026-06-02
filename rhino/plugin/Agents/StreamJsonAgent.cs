@@ -186,11 +186,14 @@ internal sealed class StreamJsonAgent : IAcpAgent, IDisposable
     // it is process spawning, not parsing.
     private bool TryResolveCommand(out string path)
     {
-        path = string.Empty;
         foreach (string candidate in Definition.SearchPaths)
             if (File.Exists(candidate))
-                path = candidate; // last match wins, preserving the original ordering
-        return path.Length > 0;
+            {
+                path = candidate; // first match wins: SearchPaths leads with PATH, the authoritative source
+                return true;
+            }
+        path = string.Empty;
+        return false;
     }
 
     // The runner resolves the MCP server set from AISettings (the parser stays settings-free). Each

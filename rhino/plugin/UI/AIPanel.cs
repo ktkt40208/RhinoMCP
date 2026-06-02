@@ -47,6 +47,15 @@ public class AIPAnel : Panel
     private const int ScrollbarGuard = 18;    // reserve the vertical scrollbar so content never x-scrolls
     private const int MaxBubbleHeight = 320;  // oversized messages cap here and scroll internally
 
+    // GH2-flavoured one-tap openers shown only on an empty conversation; clicking one sends it.
+    private static readonly string[] StarterPrompts =
+    [
+        "Build a parametric facade in Grasshopper",
+        "Add a number slider driving a box",
+        "Explain what's on the canvas",
+        "Describe the selected objects",
+    ];
+
     private static Image? CopyIconBacking { get; set; }
     private static bool CopyIconLoaded { get; set; }
 
@@ -378,7 +387,24 @@ public class AIPAnel : Panel
             return;
         }
 
+        // Happy path: an agent is available and resolved, so warm the doc's MCP listener now rather
+        // than lazily on the first prompt. Idempotent (a started listener is reused), so re-running
+        // on every Rerender is harmless. Failure is silent here; the prompt path reports if it bites.
+        if (TryDoc(out RhinoDoc liveDoc))
+            AgentDispatch.TryEnsureListener(liveDoc, out int _);
+
         TranscriptViewModel vm = TranscriptViewModel.FromLive(convo);
+
+        // An agent is ready but the conversation has no turns yet: offer one-tap GH2 starters
+        // instead of an empty pane. They vanish the moment a turn starts (vm.Items fills).
+        if (vm.Items.Count == 0 && !convo.TryGetPendingQuestion(out _))
+        {
+            ShowStarterChips();
+            SyncSendButton(false);
+            ApplyBubbleWidths();
+            return;
+        }
+
         foreach (TranscriptItem item in vm.Items)
             RenderItem(item);
 
@@ -653,10 +679,50 @@ public class AIPAnel : Panel
         return CopyIconBacking;
     }
 
+    // Empty-conversation discoverability: a stacked column of clickable starters. Clicking one drops
+    // the text into the prompt box and routes through the normal Send path, so the chips disappear on
+    // the next Rerender as the turn begins.
+    private void ShowStarterChips()
+    {
+        StackLayout chips = new()
+        {
+            Spacing = 6,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Items =
+            {
+                new Label
+                {
+                    Text = "Try one of these to get going:",
+                    TextColor = SystemColors.DisabledText,
+                    TextAlignment = TextAlignment.Center,
+                },
+            },
+        };
+
+        foreach (string prompt in StarterPrompts)
+        {
+            LinkButton chip = new() { Text = prompt };
+            chip.Click += (_, _) => SendStarter(prompt);
+            chips.Items.Add(chip);
+        }
+
+        TranscriptStack.Items.Add(chips);
+    }
+
+    private void SendStarter(string prompt)
+    {
+        PromptBox.Text = prompt;
+        Send();
+    }
+
     private void ShowNoAgentState()
     {
+        LinkButton docs = new() { Text = "Install and sign in to an agent →" };
+        docs.Click += (_, _) => Application.Instance.Open(DocsLinks.GettingStarted);
+
         Button open = new() { Text = "Open AI Settings" };
         open.Click += (_, _) => OpenSettings();
+
         TranscriptStack.Items.Add(new StackLayout
         {
             Spacing = 8,
@@ -666,10 +732,11 @@ public class AIPAnel : Panel
                 new Label { Text = "No AI agent found.", Font = SystemFonts.Bold() },
                 new Label
                 {
-                    Text = "Install Claude or Codex, or configure a search path in AI Settings.",
+                    Text = "Install an agent (Claude, Codex, or Gemini) and sign in to get started.",
                     Wrap = WrapMode.Word,
                     TextAlignment = TextAlignment.Center,
                 },
+                docs,
                 open,
             },
         });
