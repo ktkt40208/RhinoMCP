@@ -42,6 +42,17 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
 
         string mcpConfig = new JsonObject { ["mcpServers"] = servers }.ToJsonString(McpSerializer.Options);
 
+        // Raise Claude Code's per-tool-call timeout to one hour. ask_user is a human-in-the-loop tool:
+        // the MCP request blocks on q.Task until the user answers. At Claude's 60s default (NWK), the
+        // tool-call times out and aborts the HTTP request, which trips ctx.RequestAborted ->
+        // AskUserTool's ct.Register(TryCancel) -> the tool returns {cancelled:true} ('no answer back')
+        // and the user's later click is dropped. MCP_TOOL_TIMEOUT is read as milliseconds and clamped
+        // [1000, int.MaxValue], so 3600000 gives the human a full hour. MCP_TIMEOUT covers MCP server
+        // startup/handshake for the same reason. (AskUserTool keeps its TryCancel: a genuinely-aborted
+        // request must still release the await; this only stops the PREMATURE timeout.)
+        psi.Environment["MCP_TOOL_TIMEOUT"] = "3600000";
+        psi.Environment["MCP_TIMEOUT"] = "3600000";
+
         psi.ArgumentList.Add("-p");
         psi.ArgumentList.Add("--input-format");
         psi.ArgumentList.Add("stream-json");
@@ -145,16 +156,18 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
         List<SessionUpdate> updates = [];
         foreach (JsonElement block in content.EnumerateArray())
         {
-            switch (block.TryGetProperty("type", out JsonElement bt) ? bt.GetString() : null)
+            switch (Str(block, "type"))
             {
                 case "text" when block.TryGetProperty("text", out JsonElement text):
                     updates.Add(new AgentMessageChunkSessionUpdate { Content = new TextContentBlock { Text = text.GetString() ?? string.Empty } });
                     break;
-                case "tool_use":
+                // No id means the later tool_result can never correlate back to this chip, so skip the
+                // tool-call rather than emit a phantom keyed on "" (the absence sentinel, not a real id).
+                case "tool_use" when TryStr(block, "id", out string toolCallId):
                     updates.Add(new ToolCallSessionUpdate
                     {
-                        ToolCallId = block.TryGetProperty("id", out JsonElement id) ? id.GetString() ?? string.Empty : string.Empty,
-                        Title = block.TryGetProperty("name", out JsonElement name) ? name.GetString() ?? string.Empty : string.Empty,
+                        ToolCallId = toolCallId,
+                        Title = Str(block, "name"),
                         // Clone so the element outlives the `using JsonDocument` above.
                         RawInput = block.TryGetProperty("input", out JsonElement input) ? input.Clone() : null,
                     });
@@ -172,11 +185,15 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
         List<SessionUpdate> updates = [];
         foreach (JsonElement block in content.EnumerateArray())
         {
-            if ((block.TryGetProperty("type", out JsonElement bt) ? bt.GetString() : null) != "tool_result")
+            if (Str(block, "type") != "tool_result")
+                continue;
+            // Without tool_use_id there is no chip to fold this output into (SetToolResult drops an
+            // empty id anyway), so skip rather than emit an update keyed on the "" absence sentinel.
+            if (!TryStr(block, "tool_use_id", out string toolCallId))
                 continue;
             updates.Add(new ToolCallUpdateSessionUpdate
             {
-                ToolCallId = block.TryGetProperty("tool_use_id", out JsonElement id) ? id.GetString() ?? string.Empty : string.Empty,
+                ToolCallId = toolCallId,
                 Status = ToolCallStatus.Completed,
                 // Clone so the element outlives the `using JsonDocument` above.
                 RawOutput = block.TryGetProperty("content", out JsonElement output) ? output.Clone() : null,
@@ -191,5 +208,21 @@ internal sealed class ClaudeStreamJsonParser : IStreamJsonParser
         return root.TryGetProperty("message", out JsonElement message)
             && message.TryGetProperty("content", out content)
             && content.ValueKind == JsonValueKind.Array;
+    }
+
+    // JSON-boundary string read. Str collapses the TryGetProperty+GetString+?? spray to one place for
+    // display-only fields (a missing/non-string value is "" and that is fine downstream). TryStr is for
+    // fields where absence is meaningful (tool ids): false means "not present", never a silent "".
+    private static string Str(JsonElement obj, string name) => TryStr(obj, name, out string value) ? value : string.Empty;
+
+    private static bool TryStr(JsonElement obj, string name, out string value)
+    {
+        if (obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String && el.GetString() is { Length: > 0 } s)
+        {
+            value = s;
+            return true;
+        }
+        value = string.Empty;
+        return false;
     }
 }

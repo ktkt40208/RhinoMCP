@@ -19,7 +19,8 @@ namespace RhMcp;
 // shipped binary. Each formerly-doubtful flag/field is now a single documented default, sourced inline.
 // If the installed `codex` differs, only ConfigureArguments here changes; the runner and ACP seam are
 // untouched. The defaults to confirm on a real machine: `--experimental-json`,
-// `-c mcp_servers.rhino.{url,type}`, `experimental_instructions`, `--resume`/`--session-id`.
+// `-c mcp_servers.rhino.{url,type,tool_timeout_sec}`, `experimental_instructions`,
+// `--resume`/`--session-id`.
 internal sealed class CodexStreamJsonParser : IStreamJsonParser
 {
     private AgentDefinition Definition { get; }
@@ -47,6 +48,16 @@ internal sealed class CodexStreamJsonParser : IStreamJsonParser
         psi.ArgumentList.Add($"mcp_servers.rhino.url=\"{mcpUrl}\"");
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add("mcp_servers.rhino.type=\"http\"");
+
+        // Raise the rhino server's per-tool-call timeout to one hour. ask_user is a human-in-the-loop
+        // tool: the MCP request blocks until the user answers, and a short default tool timeout would
+        // abort the request and drop the answer ('no answer back'). Codex's [mcp_servers.<name>] table
+        // takes tool_timeout_sec (SECONDS, unlike Claude's MCP_TOOL_TIMEOUT milliseconds), set here via
+        // -c on the rhino server. GAP: Codex exposes no MCP-tool-timeout ENV var to mirror, and the CLI
+        // is not present in this environment, so the key name/units are correct-by-construction (see the
+        // CONTRACT NOTE above), not validated against the shipped binary.
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("mcp_servers.rhino.tool_timeout_sec=3600");
 
         // Extra servers the runner resolved (a JSON-object string of name -> server-config), translated
         // to -c overrides beside rhino. rhino is never overwritten: those tools are the agent's hands on
@@ -160,16 +171,27 @@ internal sealed class CodexStreamJsonParser : IStreamJsonParser
 
     // Assistant text rides directly on the event under `message`.
     private static ParsedLine EmitAssistant(JsonElement msg) =>
-        msg.TryGetProperty("message", out JsonElement text) && text.ValueKind == JsonValueKind.String
-            ? ParsedLine.Emit(new AgentMessageChunkSessionUpdate { Content = new TextContentBlock { Text = text.GetString() ?? string.Empty } })
+        TryStr(msg, "message", out string text)
+            ? ParsedLine.Emit(new AgentMessageChunkSessionUpdate { Content = new TextContentBlock { Text = text } })
             : ParsedLine.None;
 
-    // A tool call carries the invoked tool name under `tool`; surface it as a tool-call update.
-    private static ParsedLine EmitToolCall(JsonElement msg)
+    // A tool call carries the invoked tool name under `tool`; it doubles as the correlation id, so an
+    // absent name skips the update rather than emitting a chip keyed on "".
+    private static ParsedLine EmitToolCall(JsonElement msg) =>
+        TryStr(msg, "tool", out string name)
+            ? ParsedLine.Emit(new ToolCallSessionUpdate { ToolCallId = name, Title = name })
+            : ParsedLine.None;
+
+    // JSON-boundary string read: false means the field is absent (or not a non-empty string), never a
+    // silent "" sentinel. Codex's id-bearing fields are absence-sensitive, so they all route through here.
+    private static bool TryStr(JsonElement obj, string name, out string value)
     {
-        if (!msg.TryGetProperty("tool", out JsonElement tool) || tool.ValueKind != JsonValueKind.String)
-            return ParsedLine.None;
-        string name = tool.GetString() ?? string.Empty;
-        return ParsedLine.Emit(new ToolCallSessionUpdate { ToolCallId = name, Title = name });
+        if (obj.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.String && el.GetString() is { Length: > 0 } s)
+        {
+            value = s;
+            return true;
+        }
+        value = string.Empty;
+        return false;
     }
 }
