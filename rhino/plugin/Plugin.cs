@@ -1,3 +1,4 @@
+using System.Threading;
 using Rhino.PlugIns;
 
 namespace RhMcp;
@@ -5,10 +6,24 @@ namespace RhMcp;
 public class RhMcpPlugin : PlugIn
 {
 
+    // Cancelled on shutdown so any startup background work stops cleanly with Rhino.
+    private CancellationTokenSource Shutdown { get; } = new();
+
     protected override LoadReturnCode OnLoad(ref string errorMessage)
     {
         RhinoDoc.BeginOpenDocument += Register;
+
+        // Wire the bundled rhino MCP server into any MCP-aware tools the user already has, so
+        // external agents work out of the box. Background: never block or fail OnLoad.
+        McpClientConfigInstaller.InstallInBackground(Shutdown.Token);
+
         return base.OnLoad(ref errorMessage);
+    }
+
+    protected override void OnShutdown()
+    {
+        Shutdown.Cancel();
+        Shutdown.Dispose();
     }
 
     private void Register(object? sender, DocumentOpenEventArgs e)
