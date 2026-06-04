@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Rhino.FileIO;
@@ -11,26 +12,37 @@ public static class RhinoMcpHost
 
     private static Dictionary<uint, McpServer> Servers { get; } = new();
 
+    // UI-thread-only!
+    private static Timer? _heartbeat;
+
+    // Re-advertise live listeners on this interval. Lets a spuriously-reaped slot 
+    // re-adopt on its own instead of staying gone until the user re-runs MCPStart. 
+    // Re-dropping a already-adopted listener is a no-op.
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
+
     static RhinoMcpHost()
     {
         RhinoDoc.CloseDocument += CloseServer;
     }
 
+    // A doc that owned a listener is closing (File>New/Open, or a plain close). 
+    // Stop the server, otherwise the listener is orphaned.
     private static void CloseServer(object? sender, DocumentEventArgs e)
     {
-        Servers.Remove(e.DocumentSerialNumber);
+        if (!Servers.Remove(e.DocumentSerialNumber, out McpServer? server))
+            return;
+        server?.Stop();
+        StopHeartbeatIfIdle();
     }
 
-    public static bool HasStarted(RhinoDoc doc) => Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server) && (server?.HasStarted ?? false);
+    public static bool HasStarted(RhinoDoc doc) =>
+        Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server)
+            && (server?.HasStarted ?? false);
 
     private const int DefaultPort = 10500;
     public static int GetNextPort()
     {
-        int nextPort = DefaultPort;
-        if (Servers.Any())
-        {
-            nextPort = Servers.Max(s => s.Value.Port) + 1;
-        }
+        int nextPort = Servers.Any() ? Servers.Max(s => s.Value.Port) + 1 : DefaultPort;
 
         try
         {
@@ -56,26 +68,27 @@ public static class RhinoMcpHost
 
         var ok = server.Start(doc, port);
         if (ok)
+        {
             WriteAnnouncement(port);
+            EnsureHeartbeat();
+        }
         return ok;
     }
 
     public static void Stop(RhinoDoc doc)
     {
-        if (!Servers.TryGetValue(doc.RuntimeSerialNumber, out McpServer? server))
+        if (!Servers.Remove(doc.RuntimeSerialNumber, out McpServer? server))
             return;
-        Servers.Remove(doc.RuntimeSerialNumber);
         server?.Stop();
+        StopHeartbeatIfIdle();
     }
 
     public static bool RestartOnPort(RhinoDoc doc, int port)
     {
         if (port < 1 || port > 65535)
             return false;
-        // TODO : Check no other server is using the port and report to user
         Stop(doc);
-        Start(doc, port);
-        return true;
+        return Start(doc, port);
     }
 
     // Shared dispatch for both the interactive `MCPStart` command and the
@@ -107,6 +120,34 @@ public static class RhinoMcpHost
             RhinoApp.WriteLine($"[Rhino MCP] MCP server failed to start. Try a different port.");
         }
         return false;
+    }
+
+
+    private static void EnsureHeartbeat()
+    {
+        _heartbeat ??= new Timer(static _ => Heartbeat(), null, HeartbeatInterval, HeartbeatInterval);
+    }
+
+    private static void StopHeartbeatIfIdle()
+    {
+        if (Servers.Count == 0)
+        {
+            _heartbeat?.Dispose();
+            _heartbeat = null;
+        }
+    }
+
+    private static void Heartbeat()
+    {
+        // Heartbeat must be touched from UI thread
+        RhinoApp.InvokeOnUiThread(new Action(static () =>
+        {
+            foreach (McpServer server in Servers.Values)
+            {
+                if (server.HasStarted)
+                    WriteAnnouncement(server.Port);
+            }
+        }), null);
     }
 
     // Drop a one-shot announcement into <temp>/rhino-mcp-listeners/ so a router
@@ -160,12 +201,14 @@ public static class RhinoMcpHost
     // that file once Cocoa's deferred close has run.
     public static bool StopByPort(int port)
     {
-        var entry = Servers.FirstOrDefault(kv => kv.Value.Port == port);
+        KeyValuePair<uint, McpServer> entry = Servers.FirstOrDefault(kv => kv.Value.Port == port);
         if (entry.Value is null)
             return false;
+
+        Servers.Remove(entry.Key);
         var docSerial = entry.Key;
-        Servers.Remove(docSerial);
         entry.Value.Stop();
+        StopHeartbeatIfIdle();
 
         var doc = RhinoDoc.FromRuntimeSerialNumber(docSerial);
         if (doc is null)

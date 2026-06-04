@@ -28,6 +28,10 @@ public class RhinoManager(
     private int StartupTimeoutSeconds { get; } = config.StartupTimeoutSeconds;
     private static readonly TimeSpan StaleLaunchingMaxAge = TimeSpan.FromSeconds(90);
 
+    // Liveness-probe connect budget. Generous enough that a healthy localhost listener
+    // answers well inside it, so a slow connect is the exception (and inconclusive).
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(1);
+
     private readonly int _routerPid = Environment.ProcessId;
 
     public Task<ChildRhino> SpawnAsync(string? version = null, CancellationToken ct = default)
@@ -397,21 +401,18 @@ public class RhinoManager(
         try { File.Delete(path); } catch { /* next scan will retry */ }
     }
 
-    // Pid AND port must both be alive: on Mac one listener can die while the shared
-    // app keeps running; on Windows a zombie can leave the socket bound.
-    public bool IsAlive(ChildRhino c)
+    private static bool ShouldReap(ChildRhino c)
     {
-        if (c.Status != SlotStatus.Ready) return true; // launching rows are pending, not dead
-        if (!IsProcessAlive(c.Pid)) return false;
-        if (!IsPortListening(c.Port)) return false;
-        return true;
+        if (c.Status != SlotStatus.Ready) return false; // launching rows are pending, not dead
+        if (!IsProcessAlive(c.Pid)) return true;
+        return ProbePort(c.Port) == PortProbe.Refused;   
     }
 
     public bool TryReapDead(string slotId)
     {
         var c = store.Get(slotId);
         if (c is null) return false;
-        if (IsAlive(c)) return false;
+        if (!ShouldReap(c)) return false;
         store.Delete(slotId);
         log.LogWarning("Reaped dead slot '{Slot}' (pid {Pid}, port {Port}, Rhino {Version})",
             c.SlotId, c.Pid, c.Port, c.Version);
@@ -423,7 +424,7 @@ public class RhinoManager(
         var reaped = new List<ChildRhino>();
         foreach (var c in store.ListReady())
         {
-            if (IsAlive(c)) continue;
+            if (!ShouldReap(c)) continue;
             store.Delete(c.SlotId);
             reaped.Add(c);
         }
@@ -528,17 +529,34 @@ public class RhinoManager(
         return WaitResult.Timeout;
     }
 
-    private static bool IsPortListening(int port)
+    private static bool IsPortListening(int port) => ProbePort(port) == PortProbe.Listening;
+
+    private enum PortProbe { Listening, Refused, Inconclusive }
+
+    // Probe a localhost port, distinguishing an actively-refused connection
+    // (definitively nothing listening) from a timeout/error (inconclusive)
+    private static PortProbe ProbePort(int port)
     {
         try
         {
             using var client = new TcpClient();
-            var task = client.ConnectAsync("127.0.0.1", port);
-            return task.Wait(200) && client.Connected;
+            using var cts = new CancellationTokenSource(ProbeTimeout);
+            client.ConnectAsync("127.0.0.1", port, cts.Token).AsTask().GetAwaiter().GetResult();
+            return client.Connected ? PortProbe.Listening : PortProbe.Inconclusive;
+        }
+        catch (OperationCanceledException)
+        {
+            return PortProbe.Inconclusive;
+        }
+        catch (SocketException se)
+        {
+            return se.SocketErrorCode == SocketError.ConnectionRefused
+                ? PortProbe.Refused
+                : PortProbe.Inconclusive;
         }
         catch
         {
-            return false;
+            return PortProbe.Inconclusive;
         }
     }
 }
