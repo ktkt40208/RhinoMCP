@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -29,12 +28,9 @@ public class RhinoManager(
     private int StartupTimeoutSeconds { get; } = config.StartupTimeoutSeconds;
     private static readonly TimeSpan StaleLaunchingMaxAge = TimeSpan.FromSeconds(90);
 
-    // Liveness-probe budget and retries. A non-listening port, if process is alive
-    // is treated as a transient blip, until it misses PortMissThreshold times in a row.
-    // If process is dead, it is still reaped immediately.
+    // Liveness-probe connect budget. Generous enough that a healthy localhost listener
+    // answers well inside it, so a slow connect is the exception (and inconclusive).
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(1);
-    private const int PortMissThreshold = 3;
-    private readonly ConcurrentDictionary<string, int> _portMisses = new();
 
     private readonly int _routerPid = Environment.ProcessId;
 
@@ -405,47 +401,11 @@ public class RhinoManager(
         try { File.Delete(path); } catch { /* next scan will retry */ }
     }
 
-    // Pid AND port must both be alive: on Mac one listener can die while the shared
-    // app keeps running; on Windows a zombie can leave the socket bound.
-    public static bool IsAlive(ChildRhino c)
-    {
-        if (c.Status != SlotStatus.Ready) return true; // launching rows are pending, not dead
-        if (!IsProcessAlive(c.Pid)) return false;
-        if (ProbePort(c.Port) != PortProbe.Listening) return false;
-        return true;
-    }
-
-    // Whether a slot should be deleted.  
-    private bool ShouldReap(ChildRhino c)
+    private static bool ShouldReap(ChildRhino c)
     {
         if (c.Status != SlotStatus.Ready) return false; // launching rows are pending, not dead
-
-        // Process death is conclusive and reaped immediately.
-        if (!IsProcessAlive(c.Pid))
-        {
-            _portMisses.TryRemove(c.SlotId, out _);
-            return true;
-        }
-
-        // A non-listening port on a live process is treated as transient until
-        // PortMissThreshold consecutive misses. 
-        if (ProbePort(c.Port) == PortProbe.Listening)
-        {
-            // A successful probe resets the counter.
-            _portMisses.TryRemove(c.SlotId, out _);
-            return false;
-        }
-
-        int misses = _portMisses.AddOrUpdate(c.SlotId, 1, (_, n) => n + 1);
-        if (misses < PortMissThreshold)
-        {
-            log.LogDebug("Slot '{Slot}' port {Port} not answering (miss {Miss}/{Threshold}); deferring reap",
-                c.SlotId, c.Port, misses, PortMissThreshold);
-            return false;
-        }
-
-        _portMisses.TryRemove(c.SlotId, out _);
-        return true;
+        if (!IsProcessAlive(c.Pid)) return true;
+        return ProbePort(c.Port) == PortProbe.Refused;   
     }
 
     public bool TryReapDead(string slotId)
