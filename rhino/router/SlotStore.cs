@@ -298,6 +298,28 @@ public sealed class SlotStore : IDisposable
         }
     }
 
+    // Prune the slot(s) bound to a specific listener (pid+port). Drives the
+    // graceful-departure path: the plugin tells us a listener closed cleanly, so
+    // we drop its row rather than waiting to probe it dead. Returns removed ids.
+    public IReadOnlyList<string> DeleteByListener(int pid, int port)
+    {
+        lock (_connLock)
+        {
+            List<string> ids = [];
+            using (SqliteCommand cmd = _conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT slot_id FROM slots WHERE pid=$p AND port=$port;";
+                cmd.Parameters.AddWithValue("$p", pid);
+                cmd.Parameters.AddWithValue("$port", port);
+                using SqliteDataReader r = cmd.ExecuteReader();
+                while (r.Read()) ids.Add(r.GetString(0));
+            }
+            if (ids.Count > 0)
+                Exec("DELETE FROM slots WHERE pid=$p AND port=$port;", ("$p", pid), ("$port", port));
+            return ids;
+        }
+    }
+
     // Drop-file adoption. Atomically:
     //   1. Bail out (return null) if any slot already points at this (pid, port)
     //      — guards against duplicate announcements for a single listener.

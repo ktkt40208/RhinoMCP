@@ -104,6 +104,16 @@ public class ProxyDispatcher(
             }
             catch (HttpRequestException ex) when (IsConnectionFailure(ex))
             {
+                // A clean shutdown leaves a departure tombstone; a crash doesn't.
+                // Check that first so a user closing the doc/Rhino mid-call isn't
+                // reported as a crash.
+                if (manager.TryConsumeDeparture(child.Pid, child.Port))
+                {
+                    log.LogInformation("Rhino slot '{Slot}' (pid {Pid}) was closed during tool call '{Tool}'",
+                        child.SlotId, child.Pid, toolName);
+                    return WrapClosed(child, toolName, callerSlotArg: slotId, autoSpawnedSlot);
+                }
+
                 // Connection-level failure — Rhino likely crashed. Confirm via
                 // pid + port probe so we don't shout "crashed" on a transient blip.
                 if (manager.TryReapDead(child.SlotId))
@@ -154,6 +164,18 @@ public class ProxyDispatcher(
 
     private static string WrapError(ErrorInfo error, SlotInfo? autoSpawnedSlot) =>
         new ReturnResult(Payload: null, Error: error, AutoSpawnedSlot: autoSpawnedSlot).AsJson;
+
+    private static string WrapClosed(ChildRhino child, string toolName, string? callerSlotArg, SlotInfo? autoSpawnedSlot)
+    {
+        // Auto-spawn path can just retry; an explicit slot needs a fresh spawn_slot.
+        string nextAction = callerSlotArg is null
+            ? "Retry this call to auto-spawn another Rhino."
+            : "Call spawn_slot to start a new one.";
+        string message =
+            $"Rhino slot '{child.SlotId}' (Rhino {child.Version}) was closed (its document or the Rhino window was closed) " +
+            $"during '{toolName}'. The slot has been pruned. " + nextAction;
+        return WrapError(new ErrorInfo(Code: "rhino_closed", Message: message), autoSpawnedSlot);
+    }
 
     private string WrapCrash(ChildRhino child, string toolName, string? callerSlotArg, SlotInfo? autoSpawnedSlot)
     {

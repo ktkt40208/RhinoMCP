@@ -368,10 +368,17 @@ public class RhinoManager(
     // slot_not_found for a slot another router is still spawning.
     public bool Has(string slotId) => store.Get(slotId) is not null;
 
+    // Tombstones the plugin drops when a listener closes cleanly. Siblings to the
+    // *.json announcements in the same dir; MUST match RhMcpHost.WriteDeparture.
+    private const string DepartureGlob = "*.gone";
+
     // Adopt any user-started Rhino announced via the drop directory. Each file is a
-    // one-shot doorbell — always deleted, success or not.
+    // one-shot doorbell, always deleted, success or not. Departures are consumed
+    // first so a just-closed listener doesn't get re-adopted from a stale *.json.
     public void ScanAnnouncements()
     {
+        ConsumeDepartures();
+
         var dir = RouterPaths.ListenersDir;
         if (!Directory.Exists(dir)) return;
 
@@ -428,6 +435,70 @@ public class RhinoManager(
                 TryDelete(file);
             }
         }
+    }
+
+    // Consume graceful-close tombstones: a listener that went down cleanly (doc
+    // closed, MCPStart restart) drops a *.gone file so we prune its slot here
+    // instead of discovering it dead via a probe and crying crash. One-shot
+    // doorbells, always deleted, success or not.
+    public void ConsumeDepartures()
+    {
+        string dir = RouterPaths.ListenersDir;
+        if (!Directory.Exists(dir)) return;
+
+        string[] files;
+        try { files = Directory.GetFiles(dir, DepartureGlob); }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Failed to enumerate listener-departure dir {Dir}", dir);
+            return;
+        }
+
+        foreach (string file in files)
+        {
+            try
+            {
+                Departure? dep;
+                try
+                {
+                    string json = File.ReadAllText(file);
+                    dep = JsonSerializer.Deserialize(json, RouterJsonContext.Default.Departure);
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning(ex, "Bad departure file {File}; deleting", file);
+                    TryDelete(file);
+                    continue;
+                }
+
+                if (dep is not null && dep.Port > 0)
+                {
+                    foreach (string slotId in store.DeleteByListener(dep.Pid, dep.Port))
+                    {
+                        log.LogInformation("Pruned slot '{Slot}' (pid {Pid}, port {Port}, Rhino {Version}) after graceful close",
+                            slotId, dep.Pid, dep.Port, dep.Version ?? "?");
+                    }
+                }
+                TryDelete(file);
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex, "Unexpected failure processing departure {File}", file);
+                TryDelete(file);
+            }
+        }
+    }
+
+    // Did this listener leave a graceful-close tombstone? If so, consume it and
+    // prune the slot. Lets the dispatcher report a user close as such, rather
+    // than a crash, when a tool call lands on a just-closed slot.
+    public bool TryConsumeDeparture(int pid, int port)
+    {
+        string path = Path.Combine(RouterPaths.ListenersDir, $"{pid}-{port}.gone");
+        if (!File.Exists(path)) return false;
+        TryDelete(path);
+        store.DeleteByListener(pid, port);
+        return true;
     }
 
     private static void TryDelete(string path)

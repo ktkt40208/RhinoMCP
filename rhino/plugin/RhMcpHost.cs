@@ -31,7 +31,11 @@ public static class RhinoMcpHost
     {
         if (!Servers.Remove(e.DocumentSerialNumber, out McpServer? server))
             return;
-        server?.Stop();
+        if (server is not null)
+        {
+            WriteDeparture(server.Port);
+            server.Stop();
+        }
         StopHeartbeatIfIdle();
     }
 
@@ -79,7 +83,11 @@ public static class RhinoMcpHost
     {
         if (!Servers.Remove(doc.RuntimeSerialNumber, out McpServer? server))
             return;
-        server?.Stop();
+        if (server is not null)
+        {
+            WriteDeparture(server.Port);
+            server.Stop();
+        }
         StopHeartbeatIfIdle();
     }
 
@@ -174,6 +182,33 @@ public static class RhinoMcpHost
         catch (Exception ex)
         {
             RhinoApp.WriteLine($"[Rhino MCP] Failed to write listener announcement: {ex.Message}");
+        }
+    }
+
+    // Inverse of the announcement: when a listener goes down cleanly (doc closed,
+    // MCPStart restart) drop a one-shot tombstone so a running router prunes the
+    // slot promptly and reports a user close as such, not a crash. Best-effort:
+    // if no router ever reads it, the router's own port probe reaps the slot.
+    // Filename MUST match the router's RhinoManager departure handling.
+    private static void WriteDeparture(int port)
+    {
+        try
+        {
+            string dir = ListenerDropDir();
+            Directory.CreateDirectory(dir);
+            int pid = Process.GetCurrentProcess().Id;
+            string version = RhinoApp.Version.Major.ToString();
+            string path = Path.Combine(dir, $"{pid}-{port}.gone");
+            string tmp = path + ".tmp";
+            string json = JsonSerializer.Serialize(new { v = 1, pid, port, version });
+            File.WriteAllText(tmp, json);
+            if (File.Exists(path))
+                File.Delete(path);
+            File.Move(tmp, path);
+        }
+        catch (Exception ex)
+        {
+            RhinoApp.WriteLine($"[Rhino MCP] Failed to write listener departure: {ex.Message}");
         }
     }
 
