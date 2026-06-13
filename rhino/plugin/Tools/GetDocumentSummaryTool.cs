@@ -12,14 +12,12 @@ namespace RhMcp.Tools;
 [McpServerToolType]
 public static class GetDocumentSummaryTool
 {
+    // NOTE: keep this Description a SINGLE string literal (no "a" + "b" concatenation).
+    // The current router source generator (RouterToolGenerator, pre-PR #61) cannot evaluate
+    // concatenated literals and emits an empty [Description("")] on the router proxy, hiding
+    // the text from the LLM. (PR #61 adds concat support; until it merges, single literal only.)
     [McpServerTool(Name = "get_document_summary", Title = "Get Document Summary", ReadOnly = true, Destructive = false)]
-    [Description(
-        "Lightweight aggregate summary of the active document: metadata (name, path, units, " +
-        "tolerances, created/modified dates), total object count, per-type counts " +
-        "(POINT/LINE/POLYLINE/CIRCLE/ARC/CURVE/EXTRUSION/BREP/SURFACE/MESH), per-layer counts, " +
-        "model-wide bounding box, and the full layer hierarchy (parent/child nesting with per-layer " +
-        "object counts, color, visibility, lock state). Call this first to understand model composition; " +
-        "use list_objects for individual object details. Pure query — does not change selection or viewport.")]
+    [Description("Lightweight aggregate summary of the active document: metadata (name, path, units, tolerances, created/modified dates), total object count, per-type counts (POINT/LINE/POLYLINE/CIRCLE/ARC/CURVE/EXTRUSION/BREP/SURFACE/MESH), per-layer counts, model-wide bounding box, and the full layer hierarchy (parent/child nesting with per-layer object counts, color, visibility, lock state). Call this first to understand model composition; use list_objects for individual object details. Pure query — does not change selection or viewport.")]
     public static string GetDocumentSummary(RhinoDoc doc)
     {
         var typeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
