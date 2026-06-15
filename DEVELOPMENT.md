@@ -17,7 +17,8 @@ merge friction (a recent sample of upstream commits touched zero existing tool f
 
 ## Where the work is
 
-Added MCP tools live on branch **`feat/wave1-query-tools`** (not merged to `main`):
+The added MCP tools are on **`main`** (this fork's working line; `main` tracks our work,
+not a pristine mirror of upstream — see "Syncing upstream" below):
 
 - `rhino/plugin/Tools/GetDocumentSummaryTool.cs` — `get_document_summary`
 - `rhino/plugin/Tools/GetObjectInfoTool.cs` — `get_object_info`
@@ -41,7 +42,6 @@ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --qual
 export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"   # use this SDK, not an older one
 dotnet --version    # expect 8.0.4xx
 
-git checkout feat/wave1-query-tools
 dotnet build -p:RhinoTarget=R8 rhino/plugin/RhMcp.csproj
 ```
 
@@ -81,6 +81,21 @@ Build the yak / load the plugin in Rhino 8, then wire an MCP client per upstream
 (`https://mcneel.github.io/RhinoMCP/docs/`). The router is the stdio entry point; it spawns/adopts
 Rhino instances (`spawn_slot`/`close_slot`/`list_slots`) and proxies every plugin tool with a
 trailing `slot` argument.
+
+## Syncing upstream
+
+This is a **pull-only** fork: `main` carries our work, and we never PR back to mcneel. The `upstream`
+remote points at mcneel/RhinoMCP; the tag `upstream-fork-point` marks the commit `main` was forked from.
+
+```bash
+git remote -v                       # upstream -> github.com/mcneel/RhinoMCP (added already)
+git fetch upstream
+git merge upstream/main             # pull upstream changes into our main
+git diff upstream-fork-point..main  # everything this fork has changed since the fork point
+```
+
+Conflicts are rare because our tools are additive new files (a recent sample of upstream commits
+touched zero existing tool files).
 
 ## Status / next
 
